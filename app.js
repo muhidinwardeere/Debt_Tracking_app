@@ -12,7 +12,7 @@
   function emptyData() {
     return {
       version: 1,
-      settings: { shopName: '', currency: '$', ownerPhone: '' },
+      settings: { shopName: '', currency: 'KSh', ownerPhone: '' },
       customers: [],
       entries: [],
       lastBackup: null
@@ -74,7 +74,10 @@
       minimumFractionDigits: v % 1 ? 2 : 0,
       maximumFractionDigits: 2
     });
-    return (neg ? '-' : '') + (data.settings.currency || '') + s;
+    var cur = data.settings.currency || '';
+    // Put a space after word symbols like "KSh" (KSh 1,200) but not after "$".
+    if (/[A-Za-z]$/.test(cur)) cur += ' ';
+    return (neg ? '-' : '') + cur + s;
   }
 
   function balanceOf(customerId) {
@@ -401,7 +404,7 @@
         '<label for="s-name">Shop name</label>' +
         '<input id="s-name" name="shopName" value="' + esc(s.shopName) + '" placeholder="e.g. Hooyo Shop">' +
         '<label for="s-cur">Money symbol</label>' +
-        '<input id="s-cur" name="currency" value="' + esc(s.currency) + '" placeholder="$, KSh, Sh…">' +
+        '<input id="s-cur" name="currency" value="' + esc(s.currency) + '" placeholder="KSh">' +
         '<div style="margin-top:14px"><button class="btn block">Save settings</button></div>' +
       '</form>' +
       '<section class="card">' +
