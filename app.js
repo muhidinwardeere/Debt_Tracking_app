@@ -10,7 +10,7 @@
 
   var STORAGE_KEY = 'debtbook.v1';
   var BACKUP_REMIND_DAYS = 3;
-  var APP_VERSION = '1.5';
+  var APP_VERSION = '1.6';
   var I18N = window.I18N;
 
   // ---------- Data ----------
@@ -318,19 +318,41 @@
     });
   }
 
+  // Records on this phone that the server has not confirmed yet.
+  function unsyncedCount() {
+    return data.customers.concat(data.entries).filter(function (x) { return !data.synced[x.id]; }).length;
+  }
+
+  // Sign out only when every record is safely online, because signing out
+  // removes the records from this phone.
   function signOut() {
     if (!cloud() || !confirm(t('confirmSignOut'))) return;
-    signingOut = true;
-    window.DeynCloud.signOut().then(function (ok) {
-      if (!ok) { signingOut = false; alert(t('signOutOffline')); return; }
-      // Start fresh so nothing of the old account stays in memory.
-      setTimeout(function () { location.replace(location.pathname + location.search); }, 900);
+    var cl = window.DeynCloud;
+    toast(t('signingOutWait'), 30000);
+    if (data.dirty || unsyncedCount()) cl.retryUpload();
+    cl.waitUploads(30000).then(function (ok) {
+      // Give the "upload confirmed" update a moment to arrive.
+      return new Promise(function (res) { setTimeout(function () { res(ok); }, 1200); });
+    }).then(function (ok) {
+      var left = unsyncedCount();
+      if (!ok || left) {
+        toast('', 1);
+        if (confirm(t('signOutNotSaved', { n: left || '?' }))) backup();
+        return;
+      }
+      signingOut = true;
+      return cl.signOut().then(function (done) {
+        if (!done) { signingOut = false; toast('', 1); alert(t('signOutOffline')); return; }
+        // Start fresh so nothing of the old account stays in memory.
+        setTimeout(function () { location.replace(location.pathname + location.search); }, 900);
+      });
     }).catch(function (e) {
       signingOut = false;
       console.error(e);
       alert(t('signOutOffline'));
     });
   }
+
 
   // ---------- Language ----------
   function lang() {
@@ -443,12 +465,12 @@
   }
 
   var toastTimer;
-  function toast(msg) {
+  function toast(msg, ms) {
     var el = document.getElementById('toast');
     el.textContent = msg;
-    el.classList.add('show');
+    el.classList.toggle('show', !!msg);
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
+    toastTimer = setTimeout(function () { el.classList.remove('show'); }, ms || 2200);
   }
 
   function cleanPhone(p) {

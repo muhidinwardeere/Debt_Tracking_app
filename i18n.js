@@ -162,6 +162,8 @@ window.I18N = {
     iosStep3: 'Open Deyn Book from the home screen and sign in with the same Google account',
     notSaving: 'Not saving online',
     notSavingHelp: 'Your records are safe on this phone, but they are not reaching online storage. Check your internet. If this stays, send this code to support: {code}',
+    signingOutWait: 'Checking that everything is saved online… please wait',
+    signOutNotSaved: '{n} records are not saved online yet, so you cannot sign out now: they would be lost from this phone. Connect to the internet and try again in a minute.\n\nMake an Excel backup of your records now?',
     chooseLanguage: 'Choose your language',
     months: 'Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec'
   },
@@ -320,6 +322,8 @@ window.I18N = {
     iosStep3: 'Ka fur Deyn Book home screen-ka, kuna gal isla akoonka Google',
     notSaving: 'Online laguma kaydinayo',
     notSavingHelp: 'Diiwaannadaadu telefoonkan way ku jiraan, laakiin online ma gaarayaan. Hubi internet-ka. Haddii ay sii jirto, u dir koodhkan caawinta: {code}',
+    signingOutWait: 'Waxaa la hubinayaa in wax walba online ku kaydsan yihiin… fadlan sug',
+    signOutNotSaved: '{n} diiwaan weli online laguma kaydin, markaa hadda kama bixi kartid: telefoonkan way ka lumi lahaayeen. Ku xir internet-ka oo isku day hal daqiiqo kadib.\n\nMa samaysaa kayd Excel ah hadda?',
     chooseLanguage: 'Dooro luqaddaada',
     months: 'Jan,Feb,Mar,Abr,May,Jun,Luu,Ogo,Seb,Okt,Nof,Dis'
   }

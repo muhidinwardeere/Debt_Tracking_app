@@ -196,10 +196,15 @@ function start() {
 
     // Refuses (returns false) while changes are still waiting to upload,
     // so signing out never loses records.
+    // True once every change made on this phone has reached the server
+    // (false if that takes longer than `ms`, e.g. no internet).
+    async waitUploads(ms) {
+      const timeout = new Promise((res) => setTimeout(() => res('timeout'), ms));
+      return (await Promise.race([waitForPendingWrites(db).then(() => 'ok'), timeout])) === 'ok';
+    },
+
     async signOut() {
-      const timeout = new Promise((res) => setTimeout(() => res('timeout'), 6000));
-      const done = await Promise.race([waitForPendingWrites(db).then(() => 'ok'), timeout]);
-      if (done !== 'ok') return false;
+      if (!(await window.DeynCloud.waitUploads(30000))) return false;
       stopListening();
       await signOut(auth);
       // Also wipe Firebase's own offline copy from this phone, so the next
