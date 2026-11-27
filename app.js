@@ -10,7 +10,7 @@
 
   var STORAGE_KEY = 'debtbook.v1';
   var BACKUP_REMIND_DAYS = 3;
-  var APP_VERSION = '1.11';
+  var APP_VERSION = '1.12';
   var I18N = window.I18N;
 
   // ---------- Data ----------
@@ -1447,6 +1447,7 @@
           var name = x.shopName || t('adminNoName');
           return '<div class="item wrap"><span class="avatar">' + (x.shopName ? esc(initials(name)) : icon('store')) + '</span>' +
             '<span class="main"><div class="title">' + esc(name) + '</div>' +
+            (x.email ? '<div class="meta admin-email">' + esc(x.email) + '</div>' : '') +
             '<div class="meta">' + esc(t('adminCounts', { c: x.customers || 0, e: x.entries || 0 })) + ' · ' +
               esc((plat[x.platform] || '') + (x.version ? ' · v' + x.version : '')) + '</div></span>' +
             '<span class="end"><div class="meta">' + esc(ago(x.lastOpen)) + '</div></span></div>';

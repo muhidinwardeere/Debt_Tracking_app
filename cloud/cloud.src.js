@@ -272,6 +272,8 @@ function start() {
       try { isNew = !(await getDoc(ref)).exists(); } catch (e) { return false; }
       const out = {
         shopName: st.shopName, customers: st.customers, entries: st.entries,
+        // The Google email of this account (the rules check it is real).
+        email: (user && user.email) || '',
         lang: st.lang, version: st.version, platform: st.platform,
         lastOpen: serverTimestamp()
       };

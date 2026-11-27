@@ -81,12 +81,16 @@ service cloud.firestore {
         && okText(request.resource.data, 'currency', 8);
     }
 
-    // Usage counts for the admin page: shop name, number of customers and
-    // records, last time the app was opened. No names or amounts.
+    // Usage counts for the admin page: shop name, Google email, number of
+    // customers and records, last time the app was opened. No customer
+    // names, phone numbers or amounts.
     match /users/{uid}/stats/summary {
       allow read: if isOwner(uid) || isAdmin();
       allow create, update: if isOwner(uid)
-        && request.resource.data.keys().hasOnly(['shopName', 'customers', 'entries', 'lang', 'version', 'platform', 'lastOpen', 'firstSeen'])
+        && request.resource.data.keys().hasOnly(['shopName', 'customers', 'entries', 'lang', 'version', 'platform', 'lastOpen', 'firstSeen', 'email'])
+        // The email must be the signed-in Google account's own email.
+        && (!('email' in request.resource.data) || request.resource.data.email == ''
+            || request.resource.data.email == request.auth.token.email)
         && okText(request.resource.data, 'shopName', 60)
         && request.resource.data.customers is int && request.resource.data.customers >= 0
         && request.resource.data.entries is int && request.resource.data.entries >= 0
