@@ -10,7 +10,7 @@
 
   var STORAGE_KEY = 'debtbook.v1';
   var BACKUP_REMIND_DAYS = 3;
-  var APP_VERSION = '1.12';
+  var APP_VERSION = '1.13';
   var I18N = window.I18N;
 
   // ---------- Data ----------
@@ -324,9 +324,14 @@
   var statsTimer = null;
   function scheduleStats() {
     if (statsTimer || !cloud()) return;
-    var last = 0;
-    try { last = Number(localStorage.getItem('debtbook.statsAt') || 0); } catch (e) {}
-    if (Date.now() - last < 3 * 3600000) return;
+    // Every 3 hours, or straight away after the app was updated (so new
+    // details such as the email show up on the admin page at once).
+    var last = 0, lastVersion = '';
+    try {
+      last = Number(localStorage.getItem('debtbook.statsAt') || 0);
+      lastVersion = localStorage.getItem('debtbook.statsVersion') || '';
+    } catch (e) {}
+    if (lastVersion === APP_VERSION && Date.now() - last < 3 * 3600000) return;
     statsTimer = setTimeout(function () {
       statsTimer = null;
       var cl = cloud();
@@ -341,7 +346,12 @@
         version: APP_VERSION,
         platform: IS_IOS ? 'iphone' : /Android/i.test(navigator.userAgent) ? 'android' : 'computer'
       }).then(function (ok) {
-        if (ok) { try { localStorage.setItem('debtbook.statsAt', String(Date.now())); } catch (e) {} }
+        if (ok) {
+          try {
+            localStorage.setItem('debtbook.statsAt', String(Date.now()));
+            localStorage.setItem('debtbook.statsVersion', APP_VERSION);
+          } catch (e) {}
+        }
       }).catch(function (e) { console.error(e); });
     }, 5000);
   }
