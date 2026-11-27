@@ -10,7 +10,7 @@
 
   var STORAGE_KEY = 'debtbook.v1';
   var BACKUP_REMIND_DAYS = 3;
-  var APP_VERSION = '1.8';
+  var APP_VERSION = '1.9';
   var I18N = window.I18N;
 
   // ---------- Data ----------
@@ -279,6 +279,7 @@
       }
       if (JSON.stringify(data.synced) !== syncedBefore) { save(); }
       if (data.dirty && fromServer) scheduleRetry();
+      if (fromServer) scheduleStats();
       if (!changedAny) return;
       save();
       safeRender();
@@ -315,6 +316,35 @@
       lastRetry = Date.now();
       if (cloud() && data.dirty) window.DeynCloud.retryUpload();
     }, wait);
+  }
+
+  // ---------- Usage counts (for the app owner's admin page) ----------
+  // Only the shop name and how many customers/records there are; never
+  // names, phone numbers or amounts. At most once every 3 hours.
+  var statsTimer = null;
+  function scheduleStats() {
+    if (statsTimer || !cloud()) return;
+    var last = 0;
+    try { last = Number(localStorage.getItem('debtbook.statsAt') || 0); } catch (e) {}
+    if (Date.now() - last < 3 * 3600000) return;
+    statsTimer = setTimeout(function () {
+      statsTimer = null;
+      var cl = cloud();
+      if (!cl || !cl.putStats) return;
+      try { localStorage.setItem('debtbook.statsAt', String(Date.now())); } catch (e) {}
+      cl.putStats({
+        shopName: str(data.settings.shopName, LIMITS.shopName),
+        customers: liveCustomers().length,
+        entries: liveEntries().length,
+        lang: lang(),
+        version: APP_VERSION,
+        platform: IS_IOS ? 'iphone' : /Android/i.test(navigator.userAgent) ? 'android' : 'computer'
+      }).catch(function (e) { console.error(e); });
+    }, 5000);
+  }
+
+  function isAdmin() {
+    return !!(account && Array.isArray(window.DEYN_ADMINS) && window.DEYN_ADMINS.indexOf(account.uid) >= 0);
   }
 
   function signIn() {
@@ -988,6 +1018,7 @@
     else if (hash === '#/reports') renderReports();
     else if (hash === '#/settings') renderSettings();
     else if (hash === '#/bin') renderBin();
+    else if (hash === '#/admin') renderAdmin();
     else renderHome();
     wire(app);
     app.querySelectorAll('[data-set-pin]').forEach(function (b) { b.addEventListener('click', setupPin); });
@@ -1333,6 +1364,66 @@
     });
   }
 
+  // ---------- Admin: who uses the app ----------
+  var adminCache = null;
+  function renderAdmin() {
+    frame({ title: t('adminTitle'), back: true });
+    if (!isAdmin() || !cloud()) { location.replace('#/settings'); return; }
+    if (!adminCache) {
+      app.innerHTML = '<div class="empty">' + esc(t('loading')) + '</div>';
+      cloud().adminStats().then(function (list) {
+        adminCache = { at: Date.now(), list: list };
+        if (location.hash === '#/admin') render();
+      }).catch(function (e) {
+        console.error(e);
+        app.innerHTML = '<div class="list-card">' + emptyState('alert', '', t('adminFailed') + ' (' + (e.code || e.message) + ')') + '</div>';
+      });
+      return;
+    }
+    var now = Date.now();
+    var list = adminCache.list.slice().sort(function (a, b) { return (b.lastOpen || 0) - (a.lastOpen || 0); });
+    var within = function (ms) { return list.filter(function (x) { return x.lastOpen && now - x.lastOpen < ms; }).length; };
+    var newWeek = list.filter(function (x) { return x.firstSeen && now - x.firstSeen < 7 * DAY; }).length;
+    var stat = function (label, val, chip, ic) {
+      return '<div class="stat"><div class="top"><span class="chip ' + chip + '">' + icon(ic) + '</span>' + esc(label) + '</div>' +
+        '<div class="val num">' + val + '</div></div>';
+    };
+    var ago = function (ms) {
+      if (!ms) return '—';
+      var m = Math.round((now - ms) / 60000);
+      if (m < 60) return t('agoMin', { n: Math.max(1, m) });
+      var h = Math.round(m / 60);
+      if (h < 48) return t('agoHour', { n: h });
+      return t('agoDay', { n: Math.round(h / 24) });
+    };
+    var plat = { android: 'Android', iphone: 'iPhone', computer: 'PC' };
+    var html =
+      '<div class="report-grid">' +
+        '<div class="stat wide"><div class="top"><span class="chip brand">' + icon('store') + '</span>' + esc(t('adminShops')) + '</div>' +
+          '<div class="val num" style="font-size:30px">' + list.length + '</div>' +
+          '<div class="top" style="margin-top:4px">' + esc(t('adminNewWeek', { n: newWeek })) + '</div></div>' +
+        stat(t('adminToday'), within(DAY), 'paid', 'check') +
+        stat(t('adminWeek'), within(7 * DAY), 'brand', 'users') +
+        stat(t('adminMonth'), within(30 * DAY), 'brand', 'chart') +
+        stat(t('adminRecords'), list.reduce(function (n, x) { return n + (x.entries || 0); }, 0).toLocaleString('en-KE'), 'owe', 'basket') +
+      '</div>' +
+      '<div class="section-head"><h2>' + esc(t('adminList')) + '</h2>' +
+        '<button type="button" class="link-btn" id="adminRefresh">' + icon('undo') + ' ' + esc(t('refresh')) + '</button></div>';
+    html += list.length
+      ? '<div class="list-card">' + list.map(function (x) {
+          var name = x.shopName || t('adminNoName');
+          return '<div class="item wrap"><span class="avatar">' + (x.shopName ? esc(initials(name)) : icon('store')) + '</span>' +
+            '<span class="main"><div class="title">' + esc(name) + '</div>' +
+            '<div class="meta">' + esc(t('adminCounts', { c: x.customers || 0, e: x.entries || 0 })) + ' · ' +
+              esc((plat[x.platform] || '') + (x.version ? ' · v' + x.version : '')) + '</div></span>' +
+            '<span class="end"><div class="meta">' + esc(ago(x.lastOpen)) + '</div></span></div>';
+        }).join('') + '</div>'
+      : '<div class="list-card">' + emptyState('users', '', t('adminEmpty')) + '</div>';
+    html += '<p class="hint">' + icon('shield') + ' ' + esc(t('adminPrivacy')) + '</p>';
+    app.innerHTML = html;
+    document.getElementById('adminRefresh').addEventListener('click', function () { adminCache = null; render(); });
+  }
+
   // ---------- Settings ----------
   function renderSettings() {
     frame({ title: t('navSettings'), nav: 'settings' });
@@ -1352,6 +1443,10 @@
               ? '<span class="status-pill bad">' + icon('alert') + esc(t('notSaving')) + '</span>' +
                 '<div class="meta" style="margin-top:6px">' + esc(t('notSavingHelp', { code: cloudErrorCode })) + '</div>'
               : '<span class="status-pill">' + icon('check') + esc(t('synced')) + '</span>') + '</div></div>' +
+          (isAdmin()
+            ? '<button type="button" class="row-btn" data-go="#/admin"><span class="chip">' + icon('chart') + '</span>' +
+                '<span class="main">' + esc(t('adminTitle')) + '<span class="meta">' + esc(t('adminSub')) + '</span></span>' + icon('chevron') + '</button>'
+            : '') +
           '<button type="button" class="row-btn danger" data-signout><span class="chip">' + icon('logout') + '</span>' +
             '<span class="main">' + esc(t('signOut')) + '</span></button>' +
         '</div>';
@@ -1359,6 +1454,8 @@
         html += signInCardHtml();
       }
     }
+
+    if (account) html += '<p class="hint">' + icon('shield') + ' ' + esc(t('privacyNote')) + '</p>';
 
     html += '<div class="group-title">' + esc(t('pinSection')) + '</div>' +
       '<div class="list-card">' + (hasPin()

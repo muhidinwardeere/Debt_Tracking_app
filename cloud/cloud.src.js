@@ -20,7 +20,7 @@ import {
 } from 'firebase/auth';
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, onSnapshot, writeBatch, setDoc, deleteDoc,
+  collection, collectionGroup, doc, onSnapshot, writeBatch, setDoc, deleteDoc, getDoc,
   waitForPendingWrites, connectFirestoreEmulator, getDocs, terminate, clearIndexedDbPersistence,
   serverTimestamp
 } from 'firebase/firestore';
@@ -261,6 +261,33 @@ function start() {
       customers.forEach((c) => ops.push((b) => b.set(doc(db, userPath('customers', c.id)), clean(c))));
       entries.forEach((e) => ops.push((b) => b.set(doc(db, userPath('entries', e.id)), clean(e))));
       quiet(commitInChunks(ops));
+    },
+
+    // Usage counts for the app owner's admin page: shop name and how many
+    // customers/records, never names or amounts. Written at most every
+    // few hours. firstSeen is set once.
+    async putStats(st) {
+      const ref = doc(db, userPath('stats', 'summary'));
+      let isNew = false;
+      try { isNew = !(await getDoc(ref)).exists(); } catch (e) { return; }
+      const out = {
+        shopName: st.shopName, customers: st.customers, entries: st.entries,
+        lang: st.lang, version: st.version, platform: st.platform,
+        lastOpen: serverTimestamp()
+      };
+      if (isNew) out.firstSeen = serverTimestamp();
+      quiet(setDoc(ref, out, { merge: true }));
+    },
+
+    // Admin page: every shop's usage counts (the rules allow this only for
+    // the accounts listed as admins).
+    async adminStats() {
+      const snap = await getDocs(collectionGroup(db, 'stats'));
+      return snap.docs.map((d) => {
+        const x = d.data();
+        const ms = (v) => (v && typeof v.toMillis === 'function' ? v.toMillis() : 0);
+        return { ...x, lastOpen: ms(x.lastOpen), firstSeen: ms(x.firstSeen) };
+      });
     },
 
     putSettings(s) {

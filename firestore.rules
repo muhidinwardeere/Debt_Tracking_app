@@ -12,6 +12,12 @@ service cloud.firestore {
     function isOwner(uid) {
       return request.auth != null && request.auth.uid == uid;
     }
+    // The app owner's Google account(s): may read every shop's usage
+    // counts (never customers or records). Same ids as DEYN_ADMINS in
+    // firebase-config.js.
+    function isAdmin() {
+      return request.auth != null && request.auth.uid in ['ADMIN_UID_HERE'];
+    }
     function okId(id) {
       return id is string && id.matches('^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$');
     }
@@ -73,6 +79,28 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['shopName', 'currency'])
         && okText(request.resource.data, 'shopName', 60)
         && okText(request.resource.data, 'currency', 8);
+    }
+
+    // Usage counts for the admin page: shop name, number of customers and
+    // records, last time the app was opened. No names or amounts.
+    match /users/{uid}/stats/summary {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['shopName', 'customers', 'entries', 'lang', 'version', 'platform', 'lastOpen', 'firstSeen'])
+        && okText(request.resource.data, 'shopName', 60)
+        && request.resource.data.customers is int && request.resource.data.customers >= 0
+        && request.resource.data.entries is int && request.resource.data.entries >= 0
+        && okText(request.resource.data, 'lang', 5)
+        && okText(request.resource.data, 'version', 10)
+        && okText(request.resource.data, 'platform', 10)
+        && request.resource.data.lastOpen == request.time
+        && (resource == null
+              ? request.resource.data.firstSeen == request.time
+              : request.resource.data.firstSeen == resource.data.firstSeen);
+    }
+    // The admin page reads all shops' counts at once.
+    match /{path=**}/stats/{doc} {
+      allow read: if isAdmin();
     }
 
     // Everything else is closed.

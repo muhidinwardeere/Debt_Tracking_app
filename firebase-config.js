@@ -9,3 +9,7 @@ window.DEYN_FIREBASE_CONFIG = {
   messagingSenderId: '91733009403',
   appId: '1:91733009403:web:732eab60da1d9b8a93615e'
 };
+
+// Google account ids (User UID in Firebase -> Authentication -> Users) that
+// may open the admin page with usage counts. Also listed in firestore.rules.
+window.DEYN_ADMINS = [];
