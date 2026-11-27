@@ -155,7 +155,12 @@ function start() {
       }
       const x = snap.data({ serverTimestamps: 'estimate' });
       App.onMembership({ plan: x.plan, until: ms(x.until), startedAt: ms(x.startedAt) }, snap.metadata);
-    }, onErr));
+    }, (e) => {
+      // Older rules (before memberships) refuse this: memberships are then
+      // simply not in use yet. Not a saving problem, so no warning.
+      console.warn('Membership not available', e.code);
+      App.onMembership(null, { fromCache: false, unavailable: true });
+    }));
     unsubs.push(onSnapshot(doc(db, userPath('meta', 'settings')), (snap) => {
       if (snap.exists()) App.applyRemote({ settings: snap.data() }, snap.metadata);
     }, onErr));
@@ -311,10 +316,11 @@ function start() {
       const ms = (v) => (v && typeof v.toMillis === 'function' ? v.toMillis() : 0);
       const [snap, mem] = await Promise.all([
         getDocs(collectionGroup(db, 'stats')),
-        getDocs(collection(db, 'members'))
+        // Refused by older rules (before memberships): show shops anyway.
+        getDocs(collection(db, 'members')).catch((e) => { console.warn('Members not available', e.code); return null; })
       ]);
       const members = {};
-      mem.docs.forEach((d) => {
+      if (mem) mem.docs.forEach((d) => {
         const x = d.data();
         members[d.id] = { plan: x.plan, until: ms(x.until), startedAt: ms(x.startedAt), email: x.email || '' };
       });
@@ -327,6 +333,7 @@ function start() {
       Object.keys(members).forEach((uid) => {
         if (!list.some((x) => x.uid === uid)) list.push({ uid, email: members[uid].email, member: members[uid] });
       });
+      list.membersAvailable = !!mem;
       return list;
     },
 

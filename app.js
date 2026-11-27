@@ -10,7 +10,7 @@
 
   var STORAGE_KEY = 'debtbook.v1';
   var BACKUP_REMIND_DAYS = 3;
-  var APP_VERSION = '1.14';
+  var APP_VERSION = '1.15';
   var I18N = window.I18N;
 
   // ---------- Data ----------
@@ -251,6 +251,7 @@
         account = null;
         membership = null;
         membershipKnown = false;
+        membershipOff = false;
       }
       signingIn = false;
       signingOut = false;
@@ -298,6 +299,7 @@
     toastKey: function (key) { toast(t(key)); },
 
     onMembership: function (m, meta) {
+      membershipOff = !!(meta && meta.unavailable);
       membership = m;
       if (m || (meta && !meta.fromCache)) membershipKnown = true;
       safeRender();
@@ -810,9 +812,10 @@
   var MEMBER = window.DEYN_MEMBERSHIP || { trialDays: 30, prices: {}, currency: 'KSh', mpesa: '', whatsapp: '' };
   var membership = null;          // { plan, until, startedAt } from the server
   var membershipKnown = false;
+  var membershipOff = false;      // server rules without memberships yet
 
   function memberInfo() {
-    if (!cloudAvailable || !authKnown) return { active: true, unknown: true };
+    if (!cloudAvailable || !authKnown || membershipOff) return { active: true, unknown: true };
     if (!account) return { active: false, reason: 'signin' };
     if (isAdmin()) return { active: true, plan: 'lifetime' };
     if (!membershipKnown) return { active: true, unknown: true };
@@ -1529,7 +1532,7 @@
     if (!adminCache) {
       app.innerHTML = '<div class="empty">' + esc(t('loading')) + '</div>';
       cloud().adminStats().then(function (list) {
-        adminCache = { at: Date.now(), list: list };
+        adminCache = { at: Date.now(), list: list, membersOn: list.membersAvailable !== false };
         if (location.hash === '#/admin') render();
       }).catch(function (e) {
         console.error(e);
@@ -1580,11 +1583,14 @@
         stat(t('adminWeek'), within(7 * DAY), 'brand', 'users') +
         stat(t('adminMonth'), within(30 * DAY), 'brand', 'chart') +
         stat(t('adminRecords'), list.reduce(function (n, x) { return n + (x.entries || 0); }, 0).toLocaleString('en-KE'), 'owe', 'basket') +
-        stat(t('adminPaid'), count('paid') + count('life'), 'paid', 'wallet') +
-        stat(t('adminTrials'), count('trial'), 'brand', 'clock') +
-        stat(t('adminExpired'), count('expired') + count('none'), 'owe', 'lock') +
+        (adminCache.membersOn
+          ? stat(t('adminPaid'), count('paid') + count('life'), 'paid', 'wallet') +
+            stat(t('adminTrials'), count('trial'), 'brand', 'clock') +
+            stat(t('adminExpired'), count('expired') + count('none'), 'owe', 'lock')
+          : '') +
       '</div>' +
-      (list.some(function (x) { return memberOf(x).key !== 'life'; })
+      (!adminCache.membersOn ? '<p class="hint">' + icon('alert') + ' ' + esc(t('adminRulesNeeded')) + '</p>' : '') +
+      (adminCache.membersOn && list.some(function (x) { return memberOf(x).key !== 'life'; })
         ? '<button type="button" class="btn block soft" id="lifeAllBtn" style="margin-bottom:6px">' + icon('check') + esc(t('adminLifeAll')) + '</button>'
         : '') +
       '<div class="section-head"><h2>' + esc(t('adminList')) + '</h2>' +
@@ -1598,13 +1604,13 @@
             '<div class="meta">' + esc(t('adminCounts', { c: x.customers || 0, e: x.entries || 0 })) + ' · ' +
               esc((plat[x.platform] || '') + (x.version ? ' · v' + x.version : '')) + '</div></span>' +
             '<span class="end"><div class="meta">' + esc(ago(x.lastOpen)) + '</div></span></div>' +
-            '<div class="member-row"><span class="badge ' + memberOf(x).key + '">' + esc(memberOf(x).label) + '</span>' +
+            (!adminCache.membersOn ? '' : '<div class="member-row"><span class="badge ' + memberOf(x).key + '">' + esc(memberOf(x).label) + '</span>' +
               '<span class="member-btns">' +
                 '<button type="button" class="btn small soft" data-plan="month" data-uid="' + esc(x.uid) + '">+1 ' + esc(t('adminMonthBtn')) + '</button>' +
                 '<button type="button" class="btn small soft" data-plan="year" data-uid="' + esc(x.uid) + '">+1 ' + esc(t('adminYearBtn')) + '</button>' +
                 '<button type="button" class="btn small soft" data-plan="life" data-uid="' + esc(x.uid) + '">' + esc(t('plan_lifetime')) + '</button>' +
                 (memberOf(x).active ? '<button type="button" class="btn small danger-text" data-plan="stop" data-uid="' + esc(x.uid) + '">' + esc(t('adminStop')) + '</button>' : '') +
-              '</span></div>';
+              '</span></div>');
         }).join('') + '</div>'
       : '<div class="list-card">' + emptyState('users', '', t('adminEmpty')) + '</div>';
     html += '<p class="hint">' + icon('shield') + ' ' + esc(t('adminPrivacy')) + '</p>';

@@ -261,6 +261,7 @@ window.I18N = {
     adminConfirm_year: 'Add 1 year for {who}?',
     adminConfirm_life: 'Give lifetime membership to {who}?',
     adminConfirm_stop: 'Stop the membership of {who}? They can still see their records but not add new ones.',
+    adminRulesNeeded: 'Memberships are off until the new database rules are published in Firebase. Everyone can use the app for now.',
     chooseLanguage: 'Choose your language',
     months: 'Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec'
   },
@@ -518,6 +519,7 @@ window.I18N = {
     adminConfirm_year: 'Ma ku dartaa 1 sannad {who}?',
     adminConfirm_life: 'Ma siisaa xubinnimo weligaa ah {who}?',
     adminConfirm_stop: 'Ma joojisaa xubinnimada {who}? Weli way arki karaan diiwaannadooda laakiin cusub kuma dari karaan.',
+    adminRulesNeeded: 'Xubinnimadu way dansan tahay ilaa xeerarka cusub ee database-ka lagu daabaco Firebase. Hadda qof walba wuu isticmaali karaa app-ka.',
     chooseLanguage: 'Dooro luqaddaada',
     months: 'Jan,Feb,Mar,Abr,May,Jun,Luu,Ogo,Seb,Okt,Nof,Dis'
   }
