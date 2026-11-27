@@ -4,8 +4,13 @@
  * Every Excel file the app makes is also a backup: besides the sheets people
  * read, it holds a hidden sheet with the exact records, so "Restore" can
  * put them back into the app without losing anything.
+ *
+ * Writing uses SheetJS. Reading does NOT: SheetJS 0.18.5 (the last version
+ * on npm) has known problems when reading crafted files, so files chosen
+ * for Restore are read by the small, strict reader below instead.
  */
-import { utils, write, read } from 'xlsx';
+import { utils, write } from 'xlsx';
+import { unzipSync, strFromU8 } from 'fflate';
 
 const DATA_SHEET = 'deynbook_data';
 const CHUNK = 30000; // Excel cells hold at most 32,767 characters
@@ -29,21 +34,77 @@ export function makeWorkbook(sheets, backupData) {
   return new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }
 
+// ---------- Strict .xlsx reader (for Restore) ----------
+const MAX_FILE = 20 * 1024 * 1024;      // 20 MB file
+const MAX_PART = 60 * 1024 * 1024;      // 60 MB once unzipped (zip-bomb guard)
+
+function readXlsx(arrayBuffer) {
+  if (arrayBuffer.byteLength > MAX_FILE) throw new Error('file too large');
+  let total = 0;
+  const files = unzipSync(new Uint8Array(arrayBuffer), {
+    filter: (f) => {
+      const want = f.name === 'xl/workbook.xml' || f.name === 'xl/_rels/workbook.xml.rels' ||
+        f.name === 'xl/sharedStrings.xml' || /^xl\/worksheets\/sheet\d+\.xml$/.test(f.name);
+      if (!want) return false;
+      total += f.originalSize;
+      if (total > MAX_PART) throw new Error('file too large');
+      return true;
+    }
+  });
+  const xml = (name) => files[name] ? new DOMParser().parseFromString(strFromU8(files[name]), 'application/xml') : null;
+  const all = (doc, tag) => doc ? Array.from(doc.getElementsByTagNameNS('*', tag)) : [];
+  const textOf = (el) => all(el, 't').map((t) => t.textContent).join('');
+
+  const shared = all(xml('xl/sharedStrings.xml'), 'si').map(textOf);
+  const rels = {};
+  all(xml('xl/_rels/workbook.xml.rels'), 'Relationship').forEach((r) => {
+    rels[r.getAttribute('Id')] = r.getAttribute('Target').replace(/^\/?(xl\/)?/, 'xl/');
+  });
+  const colIndex = (ref) => {
+    const letters = (ref.match(/^[A-Z]+/) || ['A'])[0];
+    let n = 0;
+    for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+    return n - 1;
+  };
+  const sheets = [];
+  all(xml('xl/workbook.xml'), 'sheet').forEach((sh) => {
+    const rid = sh.getAttribute('r:id') || sh.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
+    const doc = xml(rels[rid]);
+    const rows = [];
+    all(doc, 'row').forEach((row) => {
+      const r = Number(row.getAttribute('r')) - 1;
+      const cells = [];
+      all(row, 'c').forEach((c) => {
+        const type = c.getAttribute('t');
+        const v = all(c, 'v')[0];
+        let val;
+        if (type === 's') val = shared[Number(v && v.textContent)];
+        else if (type === 'inlineStr') val = textOf(c);
+        else val = v ? v.textContent : undefined;
+        if (val !== undefined) cells[colIndex(c.getAttribute('r') || 'A')] = val;
+      });
+      if (r >= 0 && r < 1e6) rows[r] = cells;
+    });
+    sheets.push({ name: sh.getAttribute('name') || '', rows: Array.from(rows, (x) => x || []) });
+  });
+  return sheets;
+}
+
 // Returns the records saved in a Deyn Book Excel file, or null.
 // Uses the hidden sheet when present; otherwise rebuilds the records from
 // the visible sheets (sheet 1: customers, sheet 2: history), so a file that
 // was opened and re-saved in another program still works.
 export function readBackup(arrayBuffer, debtLabels, skipNames) {
-  const wb = read(arrayBuffer, { type: 'array' });
-  const hidden = wb.Sheets[DATA_SHEET];
+  const sheets = readXlsx(arrayBuffer);
+  const hidden = sheets.find((s) => s.name === DATA_SHEET);
   if (hidden) {
-    const rows = utils.sheet_to_json(hidden, { header: 1 });
-    const json = rows.slice(1).map((r) => r[0] || '').join('');
+    const json = hidden.rows.slice(1).map((r) => r[0] || '').join('');
     try { return JSON.parse(json); } catch (e) { /* fall through */ }
   }
-  if (wb.SheetNames.length < 2) return null;
-  const custRows = utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false }).slice(1);
-  const histRows = utils.sheet_to_json(wb.Sheets[wb.SheetNames[1]], { header: 1, raw: false }).slice(1);
+  const visible = sheets.filter((s) => s.name !== DATA_SHEET);
+  if (visible.length < 2) return null;
+  const custRows = visible[0].rows.slice(1);
+  const histRows = visible[1].rows.slice(1);
   const isDebt = new Set(debtLabels.map((s) => s.toLowerCase()));
   const now = new Date().toISOString();
   let n = 0;

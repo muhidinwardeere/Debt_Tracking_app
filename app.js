@@ -10,7 +10,7 @@
 
   var STORAGE_KEY = 'debtbook.v1';
   var BACKUP_REMIND_DAYS = 3;
-  var APP_VERSION = '1.4';
+  var APP_VERSION = '1.5';
   var I18N = window.I18N;
 
   // ---------- Data ----------
@@ -29,7 +29,8 @@
       entries: [],
       lastBackup: null,
       owner: null,   // uid of the signed-in account these records belong to
-      dirty: false   // changed while not signed in, so must be uploaded
+      dirty: false,  // changed while not signed in, so must be uploaded
+      synced: {}     // ids the server has confirmed it has (see applyRemote)
     };
   }
 
@@ -44,15 +45,60 @@
     }
   }
 
+  // ---------- Checking records ----------
+  // Every record that comes from outside (phone storage, the server, a
+  // restored file) is checked here. Bad records are skipped, never trusted.
+  // These limits match firestore.rules.
+  var LIMITS = { name: 100, phone: 30, place: 200, note: 300, createdAt: 40, shopName: 60, currency: 8 };
+  var MAX_AMOUNT = 10000000000000; // in cents (100 billion)
+  var ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/; // no leading _ (blocks __proto__)
+  var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  function str(v, max) { return typeof v === 'string' ? v.slice(0, max) : ''; }
+
+  function cleanCustomer(c) {
+    if (!c || typeof c !== 'object' || typeof c.id !== 'string' || !ID_RE.test(c.id)) return null;
+    var name = str(c.name, LIMITS.name).trim();
+    if (!name) return null;
+    return { id: c.id, name: name, phone: str(c.phone, LIMITS.phone), place: str(c.place, LIMITS.place),
+      createdAt: str(c.createdAt, LIMITS.createdAt) };
+  }
+
+  function cleanEntry(e) {
+    if (!e || typeof e !== 'object' || typeof e.id !== 'string' || !ID_RE.test(e.id)) return null;
+    if (typeof e.customerId !== 'string' || !ID_RE.test(e.customerId)) return null;
+    if (e.type !== 'debt' && e.type !== 'payment') return null;
+    var amount = Number(e.amount);
+    if (!Number.isInteger(amount) || amount <= 0 || amount > MAX_AMOUNT) return null;
+    if (typeof e.date !== 'string' || !DATE_RE.test(e.date)) return null;
+    return { id: e.id, customerId: e.customerId, type: e.type, amount: amount,
+      note: str(e.note, LIMITS.note), date: e.date, createdAt: str(e.createdAt, LIMITS.createdAt) };
+  }
+
+  function cleanList(list, fn) {
+    var seen = {};
+    return (Array.isArray(list) ? list : []).map(fn).filter(function (x) {
+      if (!x || seen[x.id]) return false;
+      seen[x.id] = true;
+      return true;
+    });
+  }
+
   function normalize(d) {
     var base = emptyData();
     if (!d || typeof d !== 'object') return base;
-    base.settings = Object.assign(base.settings, d.settings || {});
-    base.customers = Array.isArray(d.customers) ? d.customers : [];
-    base.entries = Array.isArray(d.entries) ? d.entries : [];
-    base.lastBackup = d.lastBackup || null;
-    base.owner = d.owner || null;
+    var s = d.settings && typeof d.settings === 'object' ? d.settings : {};
+    if (typeof s.shopName === 'string') base.settings.shopName = s.shopName.slice(0, LIMITS.shopName);
+    if (typeof s.currency === 'string') base.settings.currency = s.currency.slice(0, LIMITS.currency);
+    if (I18N[s.lang]) base.settings.lang = s.lang;
+    base.customers = cleanList(d.customers, cleanCustomer);
+    base.entries = cleanList(d.entries, cleanEntry);
+    base.lastBackup = typeof d.lastBackup === 'string' ? d.lastBackup : null;
+    base.owner = typeof d.owner === 'string' ? d.owner : null;
     base.dirty = !!d.dirty;
+    if (d.synced && typeof d.synced === 'object') {
+      Object.keys(d.synced).forEach(function (k) { if (ID_RE.test(k)) base.synced[k] = 1; });
+    }
     return base;
   }
 
@@ -96,6 +142,33 @@
     return { id: e.id, customerId: e.customerId, type: e.type === 'payment' ? 'payment' : 'debt', amount: +e.amount || 0,
       note: e.note || '', date: e.date || '', createdAt: e.createdAt || '' };
   }
+
+  // Combine the server's list with this phone's list without ever losing a
+  // record the server has not confirmed. A record is "confirmed" once a
+  // server answer includes it with no upload still waiting. Then:
+  //  - confirmed here, missing on the server  -> deleted on another phone: remove
+  //  - never confirmed, missing on the server -> keep it and upload it again
+  //    (its upload was refused or never arrived)
+  function mergeRemote(localList, remoteList, clean, fromServer) {
+    var out = [];
+    var remoteIds = {};
+    var needUpload = false;
+    remoteList.forEach(function (raw) {
+      var item = clean(raw);
+      if (!item) return;
+      remoteIds[item.id] = true;
+      if (fromServer && !raw._pending) data.synced[item.id] = 1;
+      out.push(item);
+    });
+    localList.forEach(function (item) {
+      if (remoteIds[item.id]) return;
+      if (fromServer && data.synced[item.id]) { delete data.synced[item.id]; return; }
+      if (fromServer) needUpload = true;
+      out.push(item);
+    });
+    if (needUpload) data.dirty = true;
+    return out;
+  }
   function byId(a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; }
   function sameList(a, b) {
     return JSON.stringify(a.slice().sort(byId)) === JSON.stringify(b.slice().sort(byId));
@@ -130,9 +203,17 @@
         data = emptyData();
         data.settings.lang = keepLang;
       }
+      // Upload only what the server has not confirmed, so records deleted
+      // on another phone are not brought back.
       var upload = null;
-      if (data.dirty && (data.customers.length || data.entries.length || data.settings.shopName)) {
-        upload = { customers: data.customers.map(normC), entries: data.entries.map(normE), settings: data.settings };
+      if (data.dirty) {
+        var notSynced = function (x) { return !data.synced[x.id]; };
+        upload = {
+          customers: data.customers.filter(notSynced).map(normC),
+          entries: data.entries.filter(notSynced).map(normE),
+          settings: data.settings
+        };
+        if (!upload.customers.length && !upload.entries.length && !data.settings.shopName) upload = null;
       }
       data.owner = uid;
       data.dirty = false;
@@ -169,21 +250,26 @@
     applyRemote: function (part, meta) {
       var changedAny = false;
       if (meta && !meta.fromCache && cloudErrorCode) { cloudErrorCode = null; changedAny = true; }
+      var fromServer = !!(meta && !meta.fromCache);
+      var syncedBefore = JSON.stringify(data.synced);
       if (part.customers) {
-        var cs = part.customers.map(normC);
+        var cs = mergeRemote(data.customers, part.customers, cleanCustomer, fromServer);
         if (!sameList(cs, data.customers.map(normC))) { data.customers = cs; changedAny = true; }
       }
       if (part.entries) {
-        var es = part.entries.map(normE);
+        var es = mergeRemote(data.entries, part.entries, cleanEntry, fromServer);
         if (!sameList(es, data.entries.map(normE))) { data.entries = es; changedAny = true; }
       }
       if (part.settings) {
         ['shopName', 'currency'].forEach(function (k) {
-          if (typeof part.settings[k] === 'string' && part.settings[k] !== data.settings[k]) {
-            data.settings[k] = part.settings[k]; changedAny = true;
+          var v = str(part.settings[k], LIMITS[k]);
+          if (typeof part.settings[k] === 'string' && v !== data.settings[k]) {
+            data.settings[k] = v; changedAny = true;
           }
         });
       }
+      if (JSON.stringify(data.synced) !== syncedBefore) { save(); }
+      if (data.dirty && fromServer) scheduleRetry();
       if (!changedAny) return;
       save();
       safeRender();
@@ -197,8 +283,30 @@
       safeRender();
     },
 
-    toastKey: function (key) { toast(t(key)); }
+    toastKey: function (key) { toast(t(key)); },
+
+    // An upload was refused: keep the records and remember to try again.
+    writeFailed: function (e) {
+      data.dirty = true;
+      save();
+      window.DeynApp.cloudError(e);
+    },
+
+    uploadDone: function () {}
   };
+
+  // Try again to upload records the server has not confirmed. Waits a few
+  // seconds (so a burst of updates causes one try) and at most once a minute.
+  var retryTimer = null, lastRetry = 0;
+  function scheduleRetry() {
+    if (retryTimer || !cloud()) return;
+    var wait = Math.max(3000, 60000 - (Date.now() - lastRetry));
+    retryTimer = setTimeout(function () {
+      retryTimer = null;
+      lastRetry = Date.now();
+      if (cloud() && data.dirty) window.DeynCloud.retryUpload();
+    }, wait);
+  }
 
   function signIn() {
     if (!window.DeynCloud) return;
@@ -214,7 +322,9 @@
     if (!cloud() || !confirm(t('confirmSignOut'))) return;
     signingOut = true;
     window.DeynCloud.signOut().then(function (ok) {
-      if (!ok) { signingOut = false; alert(t('signOutOffline')); }
+      if (!ok) { signingOut = false; alert(t('signOutOffline')); return; }
+      // Start fresh so nothing of the old account stays in memory.
+      setTimeout(function () { location.replace(location.pathname + location.search); }, 900);
     }).catch(function (e) {
       signingOut = false;
       console.error(e);
@@ -261,7 +371,8 @@
   function toCents(str) {
     var n = parseFloat(String(str).replace(/,/g, ''));
     if (!isFinite(n) || n <= 0) return null;
-    return Math.round(n * 100);
+    var cents = Math.round(n * 100);
+    return cents > 0 && cents <= MAX_AMOUNT ? cents : null;
   }
 
   function money(cents) {
@@ -434,11 +545,11 @@
     return '<div class="sheet-head"><span class="tx-icon" style="background:var(--brand-soft);color:var(--brand-text)">' + icon(c.id ? 'edit' : 'userPlus') + '</span>' +
       '<h2>' + esc(c.id ? t('editCustomer') : t('newCustomer')) + '</h2></div>' +
       '<label for="f-name">' + esc(t('name')) + '</label>' +
-      '<input id="f-name" name="name" required autocomplete="off" value="' + esc(c.name) + '">' +
+      '<input id="f-name" name="name" required maxlength="100" autocomplete="off" value="' + esc(c.name) + '">' +
       '<label for="f-phone">' + esc(t('phoneOpt')) + '</label>' +
-      '<input id="f-phone" name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="' + esc(t('phonePh')) + '" value="' + esc(c.phone) + '">' +
+      '<input id="f-phone" name="phone" type="tel" inputmode="tel" maxlength="30" autocomplete="off" placeholder="' + esc(t('phonePh')) + '" value="' + esc(c.phone) + '">' +
       '<label for="f-place">' + esc(t('placeOpt')) + '</label>' +
-      '<input id="f-place" name="place" autocomplete="off" value="' + esc(c.place) + '">' +
+      '<input id="f-place" name="place" maxlength="200" autocomplete="off" value="' + esc(c.place) + '">' +
       dialogButtons();
   }
 
@@ -475,16 +586,16 @@
       '<label for="f-amount">' + esc(t('amount', { cur: data.settings.currency })) + '</label>' +
       '<input id="f-amount" class="amount-input num" name="amount" required inputmode="decimal" autocomplete="off" placeholder="0">' +
       '<label for="f-note">' + esc(isDebt ? t('whatTaken') : t('noteOpt')) + '</label>' +
-      '<input id="f-note" name="note" autocomplete="off" placeholder="' + esc(isDebt ? t('debtPh') : t('payPh')) + '">' +
+      '<input id="f-note" name="note" maxlength="300" autocomplete="off" placeholder="' + esc(isDebt ? t('debtPh') : t('payPh')) + '">' +
       '<label for="f-date">' + esc(t('date')) + '</label>' +
-      '<input id="f-date" name="date" type="date" required value="' + today() + '">' +
+      '<input id="f-date" name="date" type="date" required min="2000-01-01" max="2099-12-31" value="' + today() + '">' +
       dialogButtons(isDebt ? 'owe' : 'paid'),
       function (fd) {
         var cents = toCents(fd.get('amount'));
         if (!cents) { alert(t('amountErr')); return false; }
         var entry = {
           id: uid(), customerId: c.id, type: type, amount: cents,
-          note: String(fd.get('note')).trim(), date: String(fd.get('date')) || today(),
+          note: String(fd.get('note')).trim(), date: DATE_RE.test(String(fd.get('date'))) ? String(fd.get('date')) : today(),
           createdAt: new Date().toISOString()
         };
         data.entries.push(entry);
@@ -852,9 +963,9 @@
     html += '<div class="group-title">' + esc(t('shop')) + '</div>' +
       '<form class="list-card form-pad" id="settingsForm">' +
         '<label for="s-name">' + esc(t('shopName')) + '</label>' +
-        '<input id="s-name" name="shopName" value="' + esc(s.shopName) + '" placeholder="' + esc(t('shopNamePh')) + '">' +
+        '<input id="s-name" name="shopName" maxlength="60" value="' + esc(s.shopName) + '" placeholder="' + esc(t('shopNamePh')) + '">' +
         '<label for="s-cur">' + esc(t('currency')) + '</label>' +
-        '<input id="s-cur" name="currency" value="' + esc(s.currency) + '" placeholder="KSh">' +
+        '<input id="s-cur" name="currency" maxlength="8" value="' + esc(s.currency) + '" placeholder="KSh">' +
         '<div style="margin-top:16px"><button class="btn block">' + esc(t('saveSettings')) + '</button></div>' +
       '</form>';
 

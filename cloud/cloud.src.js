@@ -20,7 +20,7 @@ import {
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, doc, onSnapshot, writeBatch, setDoc, deleteDoc,
-  waitForPendingWrites, connectFirestoreEmulator, getDocs
+  waitForPendingWrites, connectFirestoreEmulator, getDocs, terminate, clearIndexedDbPersistence
 } from 'firebase/firestore';
 
 const config = window.DEYN_FIREBASE_CONFIG;
@@ -50,6 +50,13 @@ function start() {
 
   let user = null;
   let unsubs = [];
+  let relistenTimer = null;
+  const RELISTEN_MS = emulatorRelisten() || 60000;
+  // Local testing only: ?relisten=4000 shortens the wait.
+  function emulatorRelisten() {
+    const m = location.search.match(/[?&]relisten=(\d+)/);
+    return m && /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? Number(m[1]) : 0;
+  }
 
   const userPath = (...parts) => ['users', user.uid, ...parts].join('/');
   const MAX_BATCH = 400;
@@ -80,21 +87,47 @@ function start() {
 
   // Writes are applied to the phone copy straight away; the returned
   // promise only finishes once the server has them, so callers don't wait.
-  function quiet(p) { p.catch((e) => console.error('Cloud write failed', e)); }
+  // A refused upload is reported to the app, which keeps the record on the
+  // phone and tries again later.
+  function quiet(p) {
+    p.catch((e) => {
+      console.error('Cloud write failed', e);
+      App.writeFailed(e);
+    });
+  }
 
   function stopListening() {
     unsubs.forEach((u) => u());
     unsubs = [];
   }
 
+  // _pending: this record's upload has not been confirmed by the server yet.
+  const withMeta = (d) => ({ ...d.data(), id: d.id, _pending: d.metadata.hasPendingWrites });
+
+  // Listen for server snapshots including "upload confirmed" changes, so the
+  // app learns as soon as a record is safely online.
+  const LISTEN = { includeMetadataChanges: true };
+
   function listen() {
     stopListening();
-    const onErr = (e) => { console.error(e); App.cloudError(e); };
-    unsubs.push(onSnapshot(collection(db, userPath('customers')), (snap) => {
-      App.applyRemote({ customers: snap.docs.map((d) => ({ id: d.id, ...d.data() })) }, snap.metadata);
+    // A refused or broken connection stops the live updates; try again in a
+    // minute (and retry any uploads then), so a fixed problem heals itself.
+    const onErr = (e) => {
+      console.error(e);
+      App.cloudError(e);
+      if (relistenTimer) return;
+      relistenTimer = setTimeout(() => {
+        relistenTimer = null;
+        if (!user) return;
+        listen();
+        window.DeynCloud.retryUpload();
+      }, RELISTEN_MS);
+    };
+    unsubs.push(onSnapshot(collection(db, userPath('customers')), LISTEN, (snap) => {
+      App.applyRemote({ customers: snap.docs.map(withMeta) }, snap.metadata);
     }, onErr));
-    unsubs.push(onSnapshot(collection(db, userPath('entries')), (snap) => {
-      App.applyRemote({ entries: snap.docs.map((d) => ({ id: d.id, ...d.data() })) }, snap.metadata);
+    unsubs.push(onSnapshot(collection(db, userPath('entries')), LISTEN, (snap) => {
+      App.applyRemote({ entries: snap.docs.map(withMeta) }, snap.metadata);
     }, onErr));
     unsubs.push(onSnapshot(doc(db, userPath('meta', 'settings')), (snap) => {
       if (snap.exists()) App.applyRemote({ settings: snap.data() }, snap.metadata);
@@ -117,6 +150,14 @@ function start() {
     return commitInChunks(ops).then(() => ops.length);
   }
 
+  function startUpload(local) {
+    App.toastKey('uploading');
+    uploadLocal(local).then((n) => {
+      if (n) App.toastKey('uploaded');
+      App.uploadDone();
+    }).catch((e) => { console.error(e); App.writeFailed(e); });
+  }
+
   onAuthStateChanged(auth, (u) => {
     const prev = user;
     user = u;
@@ -126,16 +167,20 @@ function start() {
       return;
     }
     const local = App.takeLocalForUpload(u.uid);
-    if (local) {
-      App.toastKey('uploading');
-      uploadLocal(local).then(() => App.toastKey('uploaded')).catch((e) => console.error(e));
-    }
+    if (local) startUpload(local);
     App.onAuth({ uid: u.uid, email: u.email, name: u.displayName }, !prev);
     listen();
   });
 
   window.DeynCloud = {
     isSignedIn: () => !!user,
+
+    // Send records the server has not confirmed (see app.js mergeRemote).
+    retryUpload() {
+      if (!user) return;
+      const local = App.takeLocalForUpload(user.uid);
+      if (local) startUpload(local);
+    },
 
     signIn() {
       const provider = new GoogleAuthProvider();
@@ -157,6 +202,12 @@ function start() {
       if (done !== 'ok') return false;
       stopListening();
       await signOut(auth);
+      // Also wipe Firebase's own offline copy from this phone, so the next
+      // person using it cannot dig the records out. The page reloads after.
+      try {
+        await terminate(db);
+        await clearIndexedDbPersistence(db);
+      } catch (e) { console.error(e); }
       return true;
     },
 

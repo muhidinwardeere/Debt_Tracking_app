@@ -1,9 +1,54 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Each signed-in shop owner can only read and write their own records.
-    match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+
+    // Each signed-in shop owner can only read and write their own records,
+    // and only in the shapes the app uses. Limits match app.js (LIMITS).
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
     }
+    function okId(id) {
+      return id is string && id.matches('^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$');
+    }
+    function okText(data, field, max) {
+      return !(field in data) || (data[field] is string && data[field].size() <= max);
+    }
+
+    match /users/{uid}/customers/{id} {
+      allow read, delete: if isOwner(uid);
+      allow create, update: if isOwner(uid) && okId(id)
+        && request.resource.data.keys().hasOnly(['name', 'phone', 'place', 'createdAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 100
+        && okText(request.resource.data, 'phone', 30)
+        && okText(request.resource.data, 'place', 200)
+        && okText(request.resource.data, 'createdAt', 40);
+    }
+
+    match /users/{uid}/entries/{id} {
+      allow read, delete: if isOwner(uid);
+      allow create, update: if isOwner(uid) && okId(id)
+        && request.resource.data.keys().hasOnly(['customerId', 'type', 'amount', 'note', 'date', 'createdAt'])
+        && okId(request.resource.data.customerId)
+        && request.resource.data.type in ['debt', 'payment']
+        && request.resource.data.amount is int
+        && request.resource.data.amount > 0
+        && request.resource.data.amount <= 10000000000000
+        && request.resource.data.date is string
+        && request.resource.data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && okText(request.resource.data, 'note', 300)
+        && okText(request.resource.data, 'createdAt', 40);
+    }
+
+    match /users/{uid}/meta/settings {
+      allow read, delete: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['shopName', 'currency'])
+        && okText(request.resource.data, 'shopName', 60)
+        && okText(request.resource.data, 'currency', 8);
+    }
+
+    // Everything else is closed.
   }
 }

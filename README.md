@@ -18,6 +18,26 @@ upload when the signal comes back. On a new phone, sign in with the same
 Google account and everything comes back. Each account can only see its own
 records (see `firestore.rules`).
 
+## Security and data safety
+
+- **Each account sees only its own records.** `firestore.rules` allows a
+  signed-in user to read and write only under `users/{their id}/`, and only
+  records with the expected fields, types and sizes (amounts must be whole
+  positive numbers, dates `YYYY-MM-DD`, limited text lengths). Paste this
+  file into Firebase → Firestore → Rules after any change.
+- **Records are never lost because of the server.** The app remembers which
+  records the server has confirmed. A record the server refused or never
+  received stays on the phone and is uploaded again (every minute while the
+  problem lasts, and at each start). Only records the server had confirmed
+  are removed when they disappear online (deleted on another phone).
+- **Everything coming in is checked** (phone storage, the server, restored
+  files): bad or oversized records are skipped.
+- **Restore reads files with a strict built-in reader**, not SheetJS's reader
+  (SheetJS 0.18.5 on npm has known issues reading crafted files).
+- **Sign-out** only happens after all changes are uploaded, then removes the
+  records and Firebase's offline copy from the phone.
+- The values in `firebase-config.js` are public identifiers, not secrets.
+
 ## Keeping records safe
 
 Records are saved on the phone itself. To protect them if the phone is lost:
