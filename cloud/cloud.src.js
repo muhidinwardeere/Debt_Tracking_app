@@ -276,7 +276,9 @@ function start() {
         lastOpen: serverTimestamp()
       };
       if (isNew) out.firstSeen = serverTimestamp();
-      quiet(setDoc(ref, out, { merge: true }));
+      // Not a shop record: if it fails, just try again another time
+      // (no warning, no re-upload of records).
+      setDoc(ref, out, { merge: true }).catch((e) => console.warn('Usage counts not sent', e.code));
     },
 
     // Admin page: every shop's usage counts (the rules allow this only for
