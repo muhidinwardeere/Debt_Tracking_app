@@ -10,7 +10,7 @@
 
   var STORAGE_KEY = 'debtbook.v1';
   var BACKUP_REMIND_DAYS = 3;
-  var APP_VERSION = '1.1';
+  var APP_VERSION = '1.2';
   var I18N = window.I18N;
 
   // ---------- Data ----------
@@ -1048,8 +1048,23 @@
     if (e.key === STORAGE_KEY) { data = load(); applyStaticText(); render(); }
   });
 
+  // Offline support. Look for a new version every time the app is opened
+  // or brought back to the front, and switch to it straight away.
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-    navigator.serviceWorker.register('sw.js').catch(function () {});
+    var hadController = !!navigator.serviceWorker.controller;
+    var reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      // Only reload when replacing an older version, never in the middle
+      // of typing something.
+      if (!hadController || reloaded || dialog.open) return;
+      reloaded = true;
+      location.reload();
+    });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(function (reg) {
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') reg.update().catch(function () {});
+      });
+    }).catch(function () {});
   }
 
   applyStaticText();
