@@ -318,3 +318,77 @@ details.more summary { cursor: pointer; color: var(--brand-text); font-weight: 6
 details.more[open] summary { margin-bottom: 6px; }
 .sync-badge.bad { background: #fde3e1; color: #b42318; }
 .status-pill.bad { color: var(--owe); background: var(--owe-soft); }
+
+/* ---------- Simple mode (for people who do not read well) ---------- */
+body { font-size: 17px; }
+.hero.simple { padding: 14px 20px 26px; margin-bottom: 14px; }
+.hero.simple .label { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.hero.simple .big { font-size: 44px; }
+.hero.simple .sub { font-size: 18px; }
+.hero.simple .sub svg.i { width: 22px; height: 22px; }
+svg.i.xl { width: 34px; height: 34px; stroke-width: 2.4; }
+
+.item.big { padding: 14px 16px; min-height: 76px; gap: 14px; }
+.item.big .avatar { width: 50px; height: 50px; font-size: 18px; font-weight: 700; }
+.item.big .title { font-size: 18px; }
+.item .meta svg.i { width: 13px; height: 13px; vertical-align: -2px; }
+.amount.big { font-size: 19px; font-weight: 700; }
+.search.big { font-size: 18px; padding: 15px 14px 15px 46px; }
+
+.profile .avatar.lg { width: 76px; height: 76px; font-size: 28px; font-weight: 700; }
+.profile .name { font-size: 22px; }
+.profile .balance { font-size: 40px; margin-top: 8px; }
+.profile .balance svg.i.xl { width: 56px; height: 56px; }
+.quick { gap: 28px; }
+.quick .circle { width: 56px; height: 56px; }
+.quick .circle svg.i { width: 24px; height: 24px; }
+
+.actions.big { gap: 12px; margin: 6px 0 8px; }
+.big-action {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  min-height: 120px; border: 0; border-radius: 20px; cursor: pointer; color: #fff;
+  font-size: 21px; font-weight: 700; box-shadow: var(--shadow);
+}
+.big-action svg.i { width: 46px; height: 46px; stroke-width: 2; }
+.big-action.owe { background: var(--owe); }
+.big-action.paid { background: var(--paid); }
+.big-action:active { transform: scale(.98); filter: brightness(.95); }
+.section-head h2 { display: flex; align-items: center; gap: 6px; }
+.section-head h2 svg.i { width: 18px; height: 18px; color: var(--muted); }
+.big-btn { padding: 16px 22px; font-size: 17px; }
+
+/* Amount sheet with keypad */
+dialog .grow { flex: 1; }
+.tx-icon.big { width: 56px; height: 56px; border-radius: 16px; }
+.tx-icon.big svg.i { width: 30px; height: 30px; }
+.icon-btn.plain { color: var(--muted); }
+.icon-btn.plain:active { background: var(--surface-2); }
+.amount-display {
+  margin: 14px 0 12px; padding: 14px 16px; border-radius: 16px; text-align: right;
+  font-size: 44px; font-weight: 700; letter-spacing: -.01em; background: var(--surface-2); border: 2px solid var(--line);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.amount-display .cur { font-size: 22px; color: var(--muted); font-weight: 600; }
+.amount-display.debt { color: var(--owe); border-color: color-mix(in srgb, var(--owe) 40%, var(--line)); }
+.amount-display.payment { color: var(--paid); border-color: color-mix(in srgb, var(--paid) 40%, var(--line)); }
+.keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.key {
+  height: 62px; border-radius: 16px; border: 1px solid var(--line); background: var(--surface);
+  font-size: 28px; font-weight: 600; cursor: pointer; box-shadow: var(--shadow); font-variant-numeric: tabular-nums;
+}
+.key:active { background: var(--brand-soft); }
+.key.back { color: var(--muted); }
+.key.back svg.i { width: 28px; height: 28px; }
+.save-big { margin-top: 14px; padding: 18px; font-size: 20px; border-radius: 16px; }
+.save-big svg.i { width: 26px; height: 26px; stroke-width: 3; }
+details.more summary { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+details.more summary svg.i { width: 16px; height: 16px; }
+@keyframes shake { 0%, 100% { transform: none; } 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+.shake { animation: shake .25s 2; }
+
+.bottom-nav a { font-size: 13px; }
+.bottom-nav a .pill { width: 64px; height: 34px; }
+.bottom-nav a svg.i { width: 24px; height: 24px; }
+.card.cloud.short p { margin-bottom: 10px; color: var(--text); font-size: 16px; }
+.card.cloud.short .google-btn { padding: 14px; font-size: 17px; }
+main { padding-bottom: 96px; }

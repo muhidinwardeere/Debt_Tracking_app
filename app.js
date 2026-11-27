@@ -10,7 +10,7 @@
 
   var STORAGE_KEY = 'debtbook.v1';
   var BACKUP_REMIND_DAYS = 3;
-  var APP_VERSION = '1.6';
+  var APP_VERSION = '1.7';
   var I18N = window.I18N;
 
   // ---------- Data ----------
@@ -510,6 +510,15 @@
       '</section>';
   }
 
+  // Short version for the home screen: icon, one line, Google button.
+  function signInCardShortHtml() {
+    return '<section class="card cloud short">' +
+      '<span class="chip brand">' + icon('cloud') + '</span>' +
+      '<div class="body"><p><b>' + esc(t('signInShort')) + '</b></p>' +
+      '<button type="button" class="btn block google-btn" data-signin>' + GOOGLE_G + esc(t('signIn')) + '</button></div>' +
+      '</section>';
+  }
+
   function signInCardHtml() {
     return '<section class="card cloud">' +
       '<span class="chip chip brand">' + icon('cloud') + '</span>' +
@@ -541,8 +550,9 @@
   var dialog = document.getElementById('dialog');
   var dialogForm = document.getElementById('dialogForm');
 
-  function openDialog(html, onSubmit) {
+  function openDialog(html, onSubmit, noFocus) {
     dialogForm.innerHTML = '<div class="grip"></div>' + html;
+    dialogForm.onkeydown = null;
     dialogForm.onsubmit = function (ev) {
       var btn = ev.submitter;
       if (btn && btn.value === 'cancel') return; // closes
@@ -551,8 +561,8 @@
       if (ok !== false) dialog.close();
     };
     dialog.showModal();
-    var first = dialogForm.querySelector('input, select, textarea');
-    if (first) setTimeout(function () { first.focus(); }, 60);
+    var first = dialogForm.querySelector('input:not([type=hidden]), select, textarea');
+    if (first && !noFocus) setTimeout(function () { first.focus(); }, 60);
   }
   // Tap outside the sheet to close it.
   dialog.addEventListener('click', function (e) { if (e.target === dialog) dialog.close(); });
@@ -600,32 +610,76 @@
     });
   }
 
+  // Big calculator-style keypad, easier than the phone keyboard for people
+  // who do not read well. Whole numbers for shillings; a "." key for
+  // currencies that use cents.
   function addEntry(c, type) {
     var isDebt = type === 'debt';
+    var cur = data.settings.currency || '';
+    var useDot = /[$€£]/.test(cur);
+    var keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', useDot ? '.' : '000', '0', 'back'];
     openDialog(
-      '<div class="sheet-head"><span class="tx-icon ' + type + '">' + icon(isDebt ? 'debt' : 'payment') + '</span>' +
-      '<div><h2>' + esc(isDebt ? t('tookDebt') : t('paidBack')) + '</h2><div class="sub">' + esc(c.name) + '</div></div></div>' +
-      '<label for="f-amount">' + esc(t('amount', { cur: data.settings.currency })) + '</label>' +
-      '<input id="f-amount" class="amount-input num" name="amount" required inputmode="decimal" autocomplete="off" placeholder="0">' +
-      '<label for="f-note">' + esc(isDebt ? t('whatTaken') : t('noteOpt')) + '</label>' +
-      '<input id="f-note" name="note" maxlength="300" autocomplete="off" placeholder="' + esc(isDebt ? t('debtPh') : t('payPh')) + '">' +
-      '<label for="f-date">' + esc(t('date')) + '</label>' +
-      '<input id="f-date" name="date" type="date" required min="2000-01-01" max="2099-12-31" value="' + today() + '">' +
-      dialogButtons(isDebt ? 'owe' : 'paid'),
+      '<div class="sheet-head"><span class="tx-icon big ' + type + '">' + icon(isDebt ? 'basket' : 'cash') + '</span>' +
+        '<div class="grow"><h2>' + esc(isDebt ? t('btnDebt') : t('btnPaid')) + '</h2><div class="sub">' + esc(c.name) + '</div></div>' +
+        '<button class="icon-btn plain" value="cancel" formnovalidate aria-label="' + esc(t('cancel')) + '">' + icon('x') + '</button></div>' +
+      '<div class="amount-display num ' + type + '" id="amountShow" aria-live="polite"><span class="cur">' + esc(cur) + '</span> <span id="amountNum">0</span></div>' +
+      '<input type="hidden" name="amount" id="f-amount" value="">' +
+      '<div class="keypad">' + keys.map(function (k) {
+        return '<button type="button" class="key' + (k === 'back' ? ' back' : '') + '" data-key="' + k + '"' +
+          (k === 'back' ? ' aria-label="' + esc(t('deleteRecord')) + '"' : '') + '>' + (k === 'back' ? icon('backspace') : k) + '</button>';
+      }).join('') + '</div>' +
+      '<details class="more"><summary>' + icon('edit') + ' ' + esc(t('moreDetails')) + '</summary>' +
+        '<label for="f-note">' + esc(isDebt ? t('whatTaken') : t('noteOpt')) + '</label>' +
+        '<input id="f-note" name="note" maxlength="300" autocomplete="off" placeholder="' + esc(isDebt ? t('debtPh') : t('payPh')) + '">' +
+        '<label for="f-date">' + esc(t('date')) + '</label>' +
+        '<input id="f-date" name="date" type="date" required min="2000-01-01" max="2099-12-31" value="' + today() + '">' +
+      '</details>' +
+      '<button class="btn block save-big ' + (isDebt ? 'owe' : 'paid') + '" value="ok">' + icon('check') + esc(t('save')) + '</button>',
       function (fd) {
         var cents = toCents(fd.get('amount'));
-        if (!cents) { alert(t('amountErr')); return false; }
+        if (!cents) { shake(document.getElementById('amountShow')); return false; }
         var entry = {
           id: uid(), customerId: c.id, type: type, amount: cents,
-          note: String(fd.get('note')).trim(), date: DATE_RE.test(String(fd.get('date'))) ? String(fd.get('date')) : today(),
+          note: String(fd.get('note') || '').trim(), date: DATE_RE.test(String(fd.get('date'))) ? String(fd.get('date')) : today(),
           createdAt: new Date().toISOString()
         };
         data.entries.push(entry);
         changed(function (cl) { cl.putEntry(normE(entry)); });
         render();
-        toast(isDebt ? t('debtRecorded') : t('paymentRecorded'));
-      }
+        toast((isDebt ? t('debtRecorded') : t('paymentRecorded')) + ' ✔');
+      },
+      true
     );
+    var raw = '';
+    var hidden = document.getElementById('f-amount');
+    var shown = document.getElementById('amountNum');
+    function press(k) {
+      if (k === 'back') raw = raw.slice(0, -1);
+      else if (k === '.') { if (raw.indexOf('.') < 0) raw = (raw || '0') + '.'; }
+      else if (raw.replace('.', '').length < 11) {
+        if (/\.\d\d$/.test(raw)) return;           // at most 2 decimals
+        raw = (raw === '0' ? '' : raw) + k;
+        if (/^0+$/.test(raw)) raw = '0';
+      }
+      hidden.value = raw;
+      var parts = raw.split('.');
+      shown.textContent = (Number(parts[0] || 0)).toLocaleString('en-KE') + (parts.length > 1 ? '.' + parts[1] : '');
+    }
+    dialogForm.querySelectorAll('[data-key]').forEach(function (b) {
+      b.addEventListener('click', function () { press(b.dataset.key); });
+    });
+    // Computer keyboard works too.
+    dialogForm.onkeydown = function (e) {
+      if (e.target.tagName === 'INPUT') return;
+      if (/^[0-9]$/.test(e.key)) { press(e.key); e.preventDefault(); }
+      else if (e.key === '.' && useDot) { press('.'); e.preventDefault(); }
+      else if (e.key === 'Backspace') { press('back'); e.preventDefault(); }
+    };
+  }
+
+  function shake(el) {
+    if (!el) return;
+    el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake');
   }
 
   // ---------- Page frame (app bar + bottom menu) ----------
@@ -641,8 +695,7 @@
   var reportMonth = 0;
 
   var NAV = [
-    { key: 'home', hash: '#/', icon: 'home', label: 'navHome' },
-    { key: 'customers', hash: '#/customers', icon: 'users', label: 'navCustomers' },
+    { key: 'home', hash: '#/', icon: 'users', label: 'navCustomers' },
     { key: 'reports', hash: '#/reports', icon: 'chart', label: 'navReports' },
     { key: 'settings', hash: '#/settings', icon: 'settings', label: 'navSettings' }
   ];
@@ -709,25 +762,40 @@
     return { total: total, owing: owing };
   }
 
+  // Each customer gets their own color, so people can be found by color and
+  // first letters, without reading.
+  var AVATAR_COLORS = [
+    ['#dbeafe', '#1d4ed8'], ['#dcfce7', '#15803d'], ['#fef3c7', '#b45309'], ['#fce7f3', '#be185d'],
+    ['#ede9fe', '#6d28d9'], ['#ffedd5', '#c2410c'], ['#cffafe', '#0e7490'], ['#f1f5f9', '#334155']
+  ];
+  function avatar(c, cls) {
+    var h = 0;
+    for (var i = 0; i < c.id.length; i++) h = (h * 31 + c.id.charCodeAt(i)) >>> 0;
+    var col = AVATAR_COLORS[h % AVATAR_COLORS.length];
+    return '<span class="avatar ' + (cls || '') + '" style="background:' + col[0] + ';color:' + col[1] + '">' + esc(initials(c.name)) + '</span>';
+  }
+
   function customerItem(r) {
-    return '<button type="button" class="item" data-go="#/c/' + esc(encodeURIComponent(r.c.id)) + '">' +
-      '<span class="avatar">' + esc(initials(r.c.name)) + '</span>' +
+    return '<button type="button" class="item big" data-go="#/c/' + esc(encodeURIComponent(r.c.id)) + '">' +
+      avatar(r.c) +
       '<span class="main"><div class="title">' + esc(r.c.name) + '</div>' +
-      '<div class="meta">' + esc(r.last ? t('lastActivity', { date: niceDate(r.last) }) : (r.c.phone || t('noRecords'))) + '</div></span>' +
-      '<span class="end"><div class="amount num ' + (r.bal > 0 ? 'owe-text' : 'paid-text') + '">' + esc(r.bal > 0 ? money(r.bal) : t('clear')) + '</div></span>' +
+      (r.c.phone ? '<div class="meta">' + icon('phone') + ' ' + esc(r.c.phone) + '</div>' : '') + '</span>' +
+      (r.bal > 0
+        ? '<span class="end"><div class="amount big num owe-text">' + money(r.bal) + '</div></span>'
+        : '<span class="end paid-text" aria-label="' + esc(t('clear')) + '">' + icon('checkBig', 'xl') + '</span>') +
       '</button>';
   }
 
   function entryItem(e, withCustomer, withDelete) {
     var isDebt = e.type === 'debt';
     var c = withCustomer ? findCustomer(e.customerId) : null;
-    var title = withCustomer ? (c ? c.name : '?') : (e.note || (isDebt ? t('debtOn') : t('paymentOn')));
-    var meta = withCustomer ? [e.note || (isDebt ? t('debtOn') : t('paymentOn')), niceDate(e.date)].join(' · ') : niceDate(e.date);
+    var title = withCustomer ? (c ? c.name : '?') : (e.note || (isDebt ? t('btnDebt') : t('btnPaid')));
+    var meta = withCustomer ? [e.note, niceDate(e.date)].filter(Boolean).join(' · ') : niceDate(e.date);
     var tag = withCustomer && c ? 'button type="button" data-go="#/c/' + esc(encodeURIComponent(c.id)) + '"' : 'div';
     return '<' + tag + ' class="item">' +
-      '<span class="tx-icon ' + e.type + '">' + icon(isDebt ? 'debt' : 'payment') + '</span>' +
+      '<span class="tx-icon ' + e.type + '">' + icon(isDebt ? 'basket' : 'cash') + '</span>' +
       '<span class="main"><div class="title">' + esc(title) + '</div><div class="meta">' + esc(meta) + '</div></span>' +
-      '<span class="end"><div class="amount num ' + (isDebt ? 'owe-text' : 'paid-text') + '">' + (isDebt ? '+' : '−') + money(e.amount) + '</div></span>' +
+      '<span class="end"><div class="amount big num ' + (isDebt ? 'owe-text' : 'paid-text') + '">' + (isDebt ? '+' : '−') + money(e.amount) + '</div></span>' +
       (withDelete ? '<button type="button" class="del-btn" data-del="' + esc(e.id) + '" aria-label="' + esc(t('deleteRecord')) + '">' + icon('trash') + '</button>' : '') +
       '</' + tag.split(' ')[0] + '>';
   }
@@ -735,93 +803,59 @@
   function emptyState(iconName, title, text, withButton) {
     return '<div class="empty"><span class="chip">' + icon(iconName) + '</span>' +
       (title ? '<b>' + esc(title) + '</b>' : '') + esc(text || '') +
-      (withButton ? '<div><button type="button" class="btn" data-add-customer>' + icon('userPlus') + esc(t('addFirst')) + '</button></div>' : '') +
+      (withButton ? '<div><button type="button" class="btn big-btn" data-add-customer>' + icon('userPlus') + esc(t('addFirst')) + '</button></div>' : '') +
       '</div>';
   }
 
   function fab() {
-    return '<button type="button" class="fab" data-add-customer>' + icon('plus') + esc(t('addCustomer').replace(/^\+\s*/, '')) + '</button>';
+    return '<button type="button" class="fab" data-add-customer aria-label="' + esc(t('newCustomer')) + '">' + icon('userPlus') + esc(t('addCustomer').replace(/^\+\s*/, '')) + '</button>';
   }
 
-  // ---------- Home ----------
+  // ---------- Home: the customer list ----------
+  // Kept very simple for people who do not read well: one big total, then
+  // every customer with their color, name and what they owe (red) or a
+  // green tick when they owe nothing.
   function renderHome() {
     frame({ title: data.settings.shopName || t('appName'), nav: 'home', flush: true });
     var tot = totals();
-    var month = monthRange(0);
+    var rows = customerRows();
+    var q = query.toLowerCase();
+    var shown = rows.filter(function (r) {
+      return !q || r.c.name.toLowerCase().indexOf(q) >= 0 || (r.c.phone || '').indexOf(q) >= 0;
+    }).sort(function (a, b) {
+      if ((a.bal > 0) !== (b.bal > 0)) return a.bal > 0 ? -1 : 1;
+      return a.bal > 0 ? b.bal - a.bal : a.c.name.localeCompare(b.c.name);
+    });
+
     var html =
-      '<section class="hero">' +
-        '<div class="label">' + esc(t('toCollect')) + '</div>' +
+      '<section class="hero simple">' +
+        '<div class="label">' + icon('wallet') + esc(t('toCollect')) + '</div>' +
         '<div class="big num">' + money(tot.total) + '</div>' +
-        '<div class="sub">' + icon('users') + esc(t('owingCustomers', { n: tot.owing })) + '</div>' +
-      '</section>' +
-      '<div class="stats">' +
-        '<div class="stat"><div class="top"><span class="chip paid">' + icon('payment') + '</span>' + esc(t('collectedMonth')) + '</div>' +
-          '<div class="val num paid-text">' + money(sumIn('payment', month)) + '</div></div>' +
-        '<div class="stat"><div class="top"><span class="chip owe">' + icon('debt') + '</span>' + esc(t('givenMonth')) + '</div>' +
-          '<div class="val num owe-text">' + money(sumIn('debt', month)) + '</div></div>' +
-      '</div>';
+        '<div class="sub">' + icon('users') + '<b class="num">' + tot.owing + '</b></div>' +
+      '</section>';
 
     if (IS_IOS && !IS_STANDALONE) html += iosInstallCardHtml();
     if (!data.customers.length) {
       html += '<section class="card"><h3>' + esc(t('chooseLanguage')) + '</h3><div style="margin-top:10px">' + langSegmented() + '</div></section>';
     }
-    if (cloudAvailable && authKnown && !account) html += signInCardHtml();
-
-    if (!data.customers.length) {
-      html += '<div class="list-card">' + emptyState('wallet', t('getStarted'), t('getStartedText'), true) + '</div>';
-    } else {
-      var top = customerRows().filter(function (r) { return r.bal > 0; })
-        .sort(function (a, b) { return b.bal - a.bal; }).slice(0, 5);
-      if (top.length) {
-        html += '<div class="section-head"><h2>' + esc(t('topOwing')) + '</h2>' +
-          '<button type="button" class="link-btn" data-go="#/customers">' + esc(t('seeAll')) + '</button></div>' +
-          '<div class="list-card">' + top.map(customerItem).join('') + '</div>';
-      }
-      var recent = data.entries.slice().sort(function (a, b) {
-        return (b.date + b.createdAt).localeCompare(a.date + a.createdAt);
-      }).slice(0, 6);
-      html += '<div class="section-head"><h2>' + esc(t('recent')) + '</h2></div>' +
-        (recent.length
-          ? '<div class="list-card">' + recent.map(function (e) { return entryItem(e, true, false); }).join('') + '</div>'
-          : '<div class="list-card">' + emptyState('clock', '', t('noRecords')) + '</div>');
-    }
-    html += fab();
-    app.innerHTML = html;
-  }
-
-  // ---------- Customers ----------
-  function renderCustomers() {
-    frame({ title: t('navCustomers'), nav: 'customers' });
-    var rows = customerRows();
-    var q = query.toLowerCase();
-    var shown = rows.filter(function (r) {
-      if (filter === 'owing' && r.bal <= 0) return false;
-      if (!q) return true;
-      return r.c.name.toLowerCase().indexOf(q) >= 0 || (r.c.phone || '').indexOf(q) >= 0;
-    }).sort(function (a, b) {
-      return filter === 'owing' ? b.bal - a.bal : a.c.name.localeCompare(b.c.name);
-    });
-
-    var html =
-      '<div class="search-wrap">' + icon('search') +
-        '<input class="search" id="search" type="search" placeholder="' + esc(t('searchPh')) + '" value="' + esc(query) + '"></div>' +
-      '<div class="segmented">' +
-        '<button type="button" data-filter="owing" aria-pressed="' + (filter === 'owing') + '">' + esc(t('tabOwing')) + '</button>' +
-        '<button type="button" data-filter="all" aria-pressed="' + (filter === 'all') + '">' + esc(t('tabAll')) + ' (' + rows.length + ')</button>' +
-      '</div>';
+    if (cloudAvailable && authKnown && !account) html += signInCardShortHtml();
 
     if (!rows.length) {
-      html += '<div class="list-card">' + emptyState('users', t('getStarted'), t('getStartedText'), true) + '</div>';
-    } else if (!shown.length) {
-      html += '<div class="list-card">' + emptyState(q ? 'search' : 'check', '', q ? t('noMatch', { q: query }) : t('nobodyOwes')) + '</div>';
+      html += '<div class="list-card">' + emptyState('wallet', t('getStarted'), t('getStartedText'), true) + '</div>';
     } else {
-      html += '<div class="list-card">' + shown.map(customerItem).join('') + '</div>';
+      if (rows.length > 5) {
+        html += '<div class="search-wrap">' + icon('search') +
+          '<input class="search big" id="search" type="search" placeholder="' + esc(t('searchPh')) + '" value="' + esc(query) + '"></div>';
+      }
+      html += shown.length
+        ? '<div class="list-card">' + shown.map(customerItem).join('') + '</div>'
+        : '<div class="list-card">' + emptyState('search', '', t('noMatch', { q: query })) + '</div>';
     }
     html += fab();
     app.innerHTML = html;
 
     var search = document.getElementById('search');
-    search.addEventListener('input', function () {
+    if (search) search.addEventListener('input', function () {
       query = search.value;
       var pos = search.selectionStart;
       render();
@@ -829,10 +863,10 @@
       s2.focus();
       try { s2.setSelectionRange(pos, pos); } catch (e) {}
     });
-    app.querySelectorAll('[data-filter]').forEach(function (b) {
-      b.addEventListener('click', function () { filter = b.dataset.filter; render(); });
-    });
   }
+
+  // Old link to the customer list: it is the home screen now.
+  function renderCustomers() { location.replace('#/'); }
 
   // ---------- One customer ----------
   function reminderText(c, bal) {
@@ -842,7 +876,7 @@
 
   function renderCustomer(id) {
     var c = findCustomer(id);
-    if (!c) { location.hash = '#/customers'; return; }
+    if (!c) { location.hash = '#/'; return; }
     frame({
       title: c.name, back: true,
       action: '<button type="button" class="icon-btn" id="editBtn" aria-label="' + esc(t('edit')) + '">' + icon('edit') + '</button>'
@@ -860,35 +894,31 @@
         quick += '<a target="_blank" rel="noopener" href="https://wa.me/' + esc(waNumber(phone)) + '?text=' + encodeURIComponent(msg) + '"><span class="circle wa">' + icon('whatsapp') + '</span>WhatsApp</a>';
         quick += '<a href="sms:' + esc(phone) + '?body=' + encodeURIComponent(msg) + '"><span class="circle">' + icon('sms') + '</span>SMS</a>';
       }
-    } else {
-      quick += '<button type="button" id="addPhoneBtn"><span class="circle">' + icon('phone') + '</span>' + esc(t('phoneOpt').replace(/\s*\(.*\)/, '')) + '</button>';
     }
 
     var html =
       '<section class="card profile">' +
-        '<div class="avatar lg">' + esc(initials(c.name)) + '</div>' +
+        avatar(c, 'lg') +
         '<div class="name">' + esc(c.name) + '</div>' +
-        '<div class="meta">' + esc([c.phone, c.place].filter(Boolean).join(' · ')) + '</div>' +
-        '<div class="balance-label">' + esc(bal > 0 ? t('owesYou') : bal < 0 ? t('overpaid') : t('balance')) + '</div>' +
-        '<div class="balance num ' + (bal > 0 ? 'owe-text' : 'paid-text') + '">' + esc(bal === 0 ? t('clear') : money(Math.abs(bal))) + '</div>' +
-        '<div class="quick">' + quick + '</div>' +
+        (bal > 0
+          ? '<div class="balance num owe-text">' + money(bal) + '</div>'
+          : '<div class="balance paid-text">' + icon('checkBig', 'xl') + '</div>') +
+        (quick ? '<div class="quick">' + quick + '</div>' : '') +
       '</section>' +
-      '<div class="actions">' +
-        '<button type="button" class="btn owe" id="debtBtn">' + icon('debt') + esc(t('tookDebt')) + '</button>' +
-        '<button type="button" class="btn paid" id="payBtn">' + icon('payment') + esc(t('paidBack')) + '</button>' +
-      '</div>' +
-      '<div class="section-head"><h2>' + esc(t('history')) + '</h2></div>';
+      '<div class="actions big">' +
+        '<button type="button" class="big-action owe" id="debtBtn">' + icon('basket') + '<span>' + esc(t('btnDebt')) + '</span></button>' +
+        '<button type="button" class="big-action paid" id="payBtn">' + icon('cash') + '<span>' + esc(t('btnPaid')) + '</span></button>' +
+      '</div>';
 
     html += list.length
-      ? '<div class="list-card">' + list.map(function (e) { return entryItem(e, false, true); }).join('') + '</div>'
-      : '<div class="list-card">' + emptyState('clock', '', t('noRecordsCustomer')) + '</div>';
+      ? '<div class="section-head"><h2>' + icon('clock') + ' ' + esc(t('history')) + '</h2></div>' +
+        '<div class="list-card">' + list.map(function (e) { return entryItem(e, false, true); }).join('') + '</div>'
+      : '';
 
-    html += '<div style="margin-top:20px;text-align:center"><button type="button" class="btn danger-text" id="delCustomerBtn">' + icon('trash') + esc(t('deleteCustomer')) + '</button></div>';
+    html += '<div style="margin-top:24px;text-align:center"><button type="button" class="btn danger-text" id="delCustomerBtn">' + icon('trash') + esc(t('deleteCustomer')) + '</button></div>';
     app.innerHTML = html;
 
     document.getElementById('editBtn').addEventListener('click', function () { editCustomer(c); });
-    var addPhone = document.getElementById('addPhoneBtn');
-    if (addPhone) addPhone.addEventListener('click', function () { editCustomer(c); });
     document.getElementById('debtBtn').addEventListener('click', function () { addEntry(c, 'debt'); });
     document.getElementById('payBtn').addEventListener('click', function () { addEntry(c, 'payment'); });
     app.querySelectorAll('[data-del]').forEach(function (b) {
@@ -908,7 +938,7 @@
       data.customers = data.customers.filter(function (x) { return x.id !== c.id; });
       data.entries = data.entries.filter(function (x) { return x.customerId !== c.id; });
       changed(function (cl) { cl.deleteCustomer(c.id, entryIds); });
-      location.hash = '#/customers';
+      location.hash = '#/';
       toast(t('customerDeleted'));
     });
   }
@@ -941,6 +971,13 @@
     if (top.length) {
       html += '<div class="section-head"><h2>' + esc(t('topOwing')) + '</h2></div>' +
         '<div class="list-card">' + top.map(customerItem).join('') + '</div>';
+    }
+    var recent = data.entries.slice().sort(function (a, b) {
+      return (b.date + b.createdAt).localeCompare(a.date + a.createdAt);
+    }).slice(0, 10);
+    if (recent.length) {
+      html += '<div class="section-head"><h2>' + esc(t('recent')) + '</h2></div>' +
+        '<div class="list-card">' + recent.map(function (e) { return entryItem(e, true, false); }).join('') + '</div>';
     }
     html += '<div class="group-title">' + esc(t('exportTitle')) + '</div>' +
       '<div class="list-card"><button type="button" class="row-btn" id="excelBtn"><span class="chip" style="background:#e3f6ec;color:#107c41">' + icon('file') + '</span>' +
@@ -1181,7 +1218,10 @@
   var banner = document.getElementById('backupBanner');
   function updateBackupBanner() {
     var days = data.lastBackup ? (Date.now() - new Date(data.lastBackup).getTime()) / 864e5 : Infinity;
-    if (account || !data.entries.length || days < BACKUP_REMIND_DAYS) {
+    // Not needed when signed in, and not shown while the sign-in card is
+    // (signing in is the better protection and keeps the screen simple).
+    var signInOffered = cloudAvailable && authKnown && !account;
+    if (account || signInOffered || !data.entries.length || days < BACKUP_REMIND_DAYS) {
       banner.hidden = true;
       document.body.classList.remove('has-banner');
       return;
