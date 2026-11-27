@@ -15,12 +15,14 @@
 import { initializeApp } from 'firebase/app';
 import {
   getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup,
-  signInWithRedirect, signOut, connectAuthEmulator, signInWithCredential
+  signInWithRedirect, signOut, connectAuthEmulator, signInWithCredential,
+  reauthenticateWithPopup, reauthenticateWithCredential
 } from 'firebase/auth';
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, doc, onSnapshot, writeBatch, setDoc, deleteDoc,
-  waitForPendingWrites, connectFirestoreEmulator, getDocs, terminate, clearIndexedDbPersistence
+  waitForPendingWrites, connectFirestoreEmulator, getDocs, terminate, clearIndexedDbPersistence,
+  serverTimestamp
 } from 'firebase/firestore';
 
 const config = window.DEYN_FIREBASE_CONFIG;
@@ -62,10 +64,13 @@ function start() {
   const MAX_BATCH = 400;
 
   // Firestore refuses `undefined`, so keep only plain values.
+  // deletedAt (recycle bin) is always set from the server's clock: the
+  // rules check it, so nobody can backdate it to delete records early.
   function clean(obj) {
     const out = {};
     Object.keys(obj).forEach((k) => {
       if (k === 'id') return;
+      if (k === 'deletedAt') { if (obj.deletedAt) out.deletedAt = serverTimestamp(); return; }
       const v = obj[k];
       if (v === undefined || typeof v === 'function') return;
       out[k] = v;
@@ -102,7 +107,11 @@ function start() {
   }
 
   // _pending: this record's upload has not been confirmed by the server yet.
-  const withMeta = (d) => ({ ...d.data(), id: d.id, _pending: d.metadata.hasPendingWrites });
+  const withMeta = (d) => {
+    const x = d.data({ serverTimestamps: 'estimate' });
+    if (x.deletedAt && typeof x.deletedAt.toMillis === 'function') x.deletedAt = x.deletedAt.toMillis();
+    return { ...x, id: d.id, _pending: d.metadata.hasPendingWrites };
+  };
 
   // Listen for server snapshots including "upload confirmed" changes, so the
   // app learns as soon as a record is safely online.
@@ -175,6 +184,26 @@ function start() {
   window.DeynCloud = {
     isSignedIn: () => !!user,
 
+    // "Forgot PIN": prove you are the owner by signing in with Google
+    // again. Resolves true only for the same account (never switches).
+    async reauth() {
+      if (!auth.currentUser) return false;
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      try {
+        if (emulator && window.__testReauthEmail) {
+          await reauthenticateWithCredential(auth.currentUser, GoogleAuthProvider.credential(
+            JSON.stringify({ sub: window.__testReauthEmail, email: window.__testReauthEmail, email_verified: true })));
+        } else {
+          await reauthenticateWithPopup(auth.currentUser, provider);
+        }
+        return true;
+      } catch (e) {
+        console.error(e);
+        return false;
+      }
+    },
+
     // Send records the server has not confirmed (see app.js mergeRemote).
     retryUpload() {
       if (!user) return;
@@ -218,11 +247,19 @@ function start() {
 
     putCustomer(c) { quiet(setDoc(doc(db, userPath('customers', c.id)), clean(c))); },
     putEntry(e) { quiet(setDoc(doc(db, userPath('entries', e.id)), clean(e))); },
-    deleteEntry(id) { quiet(deleteDoc(doc(db, userPath('entries', id)))); },
+    // Permanent removal of records that have been in the recycle bin long
+    // enough (the server refuses anything younger). list: [[collection, id]]
+    purge(list) {
+      const ops = list.map(([coll, id]) => (b) => b.delete(doc(db, userPath(coll, id))));
+      quiet(commitInChunks(ops));
+    },
 
-    deleteCustomer(id, entryIds) {
-      const ops = [(b) => b.delete(doc(db, userPath('customers', id)))];
-      entryIds.forEach((eid) => ops.push((b) => b.delete(doc(db, userPath('entries', eid)))));
+    // Several records in one write, so they get the same server time
+    // (a customer and their records moved to / from the bin together).
+    putBatch({ customers = [], entries = [] }) {
+      const ops = [];
+      customers.forEach((c) => ops.push((b) => b.set(doc(db, userPath('customers', c.id)), clean(c))));
+      entries.forEach((e) => ops.push((b) => b.set(doc(db, userPath('entries', e.id)), clean(e))));
       quiet(commitInChunks(ops));
     },
 
@@ -241,8 +278,10 @@ function start() {
       const keepC = new Set(data.customers.map((c) => c.id));
       const keepE = new Set(data.entries.map((e) => e.id));
       const ops = [];
-      cs.docs.forEach((d) => { if (!keepC.has(d.id)) ops.push((b) => b.delete(d.ref)); });
-      es.docs.forEach((d) => { if (!keepE.has(d.id)) ops.push((b) => b.delete(d.ref)); });
+      // Records not in the backup go to the recycle bin (never deleted).
+      const toBin = (d) => (b) => b.set(d.ref, { deletedAt: serverTimestamp() }, { merge: true });
+      cs.docs.forEach((d) => { if (!keepC.has(d.id) && !d.data().deletedAt) ops.push(toBin(d)); });
+      es.docs.forEach((d) => { if (!keepE.has(d.id) && !d.data().deletedAt) ops.push(toBin(d)); });
       data.customers.forEach((c) => ops.push((b) => b.set(doc(db, userPath('customers', c.id)), clean(c))));
       data.entries.forEach((e) => ops.push((b) => b.set(doc(db, userPath('entries', e.id)), clean(e))));
       ops.push((b) => b.set(doc(db, userPath('meta', 'settings')), {

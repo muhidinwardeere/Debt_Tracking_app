@@ -36,6 +36,16 @@ records (see `firestore.rules`).
   (SheetJS 0.18.5 on npm has known issues reading crafted files).
 - **Sign-out** only happens after all changes are uploaded, then removes the
   records and Firebase's offline copy from the phone.
+- **Recycle bin (Qashinka):** deleting only moves customers/records to the bin
+  (deletedAt set from the server's clock). The rules refuse permanent deletion
+  until an item has been in the bin for 30 days, refuse backdating, and do not
+  allow a saved debt/payment to be changed. Items can be brought back from
+  Settings → Qashinka.
+- **PIN lock:** optional 4-digit PIN (stored only as a salted PBKDF2 hash on
+  the phone), asked when the app opens, after a minute away, and before
+  deleting, restoring, signing out or changing the PIN. Wrong tries make you
+  wait (30 s after 5, then longer). Forgot PIN: sign in with Google again.
+  The PIN protects the phone; the server rules protect the records.
 - The values in `firebase-config.js` are public identifiers, not secrets.
 
 ## Keeping records safe

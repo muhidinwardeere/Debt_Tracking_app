@@ -4,6 +4,11 @@ service cloud.firestore {
 
     // Each signed-in shop owner can only read and write their own records,
     // and only in the shapes the app uses. Limits match app.js (LIMITS).
+    //
+    // Protection against deleting: records are never removed straight away.
+    // The app moves them to a recycle bin by setting deletedAt to the
+    // server's time. Permanent deletion is refused until a record has been
+    // in the bin for 30 days, and debt/payment records cannot be changed.
     function isOwner(uid) {
       return request.auth != null && request.auth.uid == uid;
     }
@@ -13,23 +18,44 @@ service cloud.firestore {
     function okText(data, field, max) {
       return !(field in data) || (data[field] is string && data[field].size() <= max);
     }
+    // deletedAt, when present, must be exactly "now" by the server's clock
+    // (or unchanged), so it cannot be backdated.
+    function okDeletedAt() {
+      return !('deletedAt' in request.resource.data)
+        || request.resource.data.deletedAt == request.time
+        || (resource != null && 'deletedAt' in resource.data
+            && request.resource.data.deletedAt == resource.data.deletedAt);
+    }
+    function binnedLongEnough() {
+      return 'deletedAt' in resource.data
+        && resource.data.deletedAt is timestamp
+        && resource.data.deletedAt < request.time - duration.value(30, 'd');
+    }
 
     match /users/{uid}/customers/{id} {
-      allow read, delete: if isOwner(uid);
+      allow read: if isOwner(uid);
+      allow delete: if isOwner(uid) && binnedLongEnough();
       allow create, update: if isOwner(uid) && okId(id)
-        && request.resource.data.keys().hasOnly(['name', 'phone', 'place', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['name', 'phone', 'place', 'createdAt', 'deletedAt'])
         && request.resource.data.name is string
         && request.resource.data.name.size() > 0
         && request.resource.data.name.size() <= 100
         && okText(request.resource.data, 'phone', 30)
         && okText(request.resource.data, 'place', 200)
-        && okText(request.resource.data, 'createdAt', 40);
+        && okText(request.resource.data, 'createdAt', 40)
+        && okDeletedAt();
     }
 
     match /users/{uid}/entries/{id} {
-      allow read, delete: if isOwner(uid);
-      allow create, update: if isOwner(uid) && okId(id)
-        && request.resource.data.keys().hasOnly(['customerId', 'type', 'amount', 'note', 'date', 'createdAt'])
+      allow read: if isOwner(uid);
+      allow delete: if isOwner(uid) && binnedLongEnough();
+      allow create: if isOwner(uid) && okId(id) && validEntry() && okDeletedAt();
+      // A saved debt or payment can only be moved to / out of the bin.
+      allow update: if isOwner(uid) && validEntry() && okDeletedAt()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedAt']);
+    }
+    function validEntry() {
+      return request.resource.data.keys().hasOnly(['customerId', 'type', 'amount', 'note', 'date', 'createdAt', 'deletedAt'])
         && okId(request.resource.data.customerId)
         && request.resource.data.type in ['debt', 'payment']
         && request.resource.data.amount is int
@@ -42,7 +68,7 @@ service cloud.firestore {
     }
 
     match /users/{uid}/meta/settings {
-      allow read, delete: if isOwner(uid);
+      allow read: if isOwner(uid);
       allow create, update: if isOwner(uid)
         && request.resource.data.keys().hasOnly(['shopName', 'currency'])
         && okText(request.resource.data, 'shopName', 60)

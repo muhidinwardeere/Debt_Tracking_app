@@ -392,3 +392,27 @@ details.more summary svg.i { width: 16px; height: 16px; }
 .card.cloud.short p { margin-bottom: 10px; color: var(--text); font-size: 16px; }
 .card.cloud.short .google-btn { padding: 14px; font-size: 17px; }
 main { padding-bottom: 96px; }
+
+/* ---------- PIN screen ---------- */
+body.pin-open { overflow: hidden; }
+.pin-screen {
+  position: fixed; inset: 0; z-index: 100; background: var(--bg);
+  display: flex; flex-direction: column; justify-content: center; gap: 22px;
+  padding: calc(24px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom));
+  max-width: 460px; margin: 0 auto;
+}
+.pin-close { position: absolute; top: calc(10px + env(safe-area-inset-top)); right: 10px; color: var(--muted); }
+.pin-top { text-align: center; }
+.pin-lock { width: 72px; height: 72px; border-radius: 22px; display: grid; place-items: center; margin: 0 auto 14px; background: var(--brand-soft); color: var(--brand-text); }
+.pin-lock svg.i { width: 36px; height: 36px; }
+.pin-title { font-size: 21px; font-weight: 700; }
+.pin-msg { color: var(--muted); font-size: 15px; margin-top: 6px; white-space: pre-line; }
+.pin-dots { display: flex; justify-content: center; gap: 18px; margin: 22px 0 6px; }
+.pin-dots span { width: 20px; height: 20px; border-radius: 50%; border: 2.5px solid var(--brand); }
+.pin-dots span.on { background: var(--brand); }
+.pin-note { min-height: 22px; color: var(--owe); font-weight: 600; font-size: 15px; }
+.pin-keys .key { height: 68px; font-size: 30px; }
+.pin-forgot { align-self: center; font-size: 15px; }
+.btn-row { display: flex; gap: 10px; }
+.btn-row .btn { flex: 1; }
+.item.wrap .meta, .item.wrap .title { white-space: normal; }

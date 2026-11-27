@@ -35,4 +35,6 @@ window.ICONS = {
   cash: "<rect width=\"20\" height=\"12\" x=\"2\" y=\"6\" rx=\"2\" /><circle cx=\"12\" cy=\"12\" r=\"2\" /><path d=\"M6 12h.01M18 12h.01\" />",
   backspace: "<path d=\"M20 5H9l-7 7 7 7h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Z\" /><line x1=\"18\" x2=\"12\" y1=\"9\" y2=\"15\" /><line x1=\"12\" x2=\"18\" y1=\"9\" y2=\"15\" />",
   checkBig: "<path d=\"M22 11.08V12a10 10 0 1 1-5.93-9.14\" /><path d=\"m9 11 3 3L22 4\" />",
+  lock: "<circle cx=\"12\" cy=\"16\" r=\"1\" /><rect x=\"3\" y=\"10\" width=\"18\" height=\"12\" rx=\"2\" /><path d=\"M7 10V7a5 5 0 0 1 10 0v3\" />",
+  undo: "<path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\" /><path d=\"M3 3v5h5\" />",
 };

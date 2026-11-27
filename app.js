@@ -10,7 +10,7 @@
 
   var STORAGE_KEY = 'debtbook.v1';
   var BACKUP_REMIND_DAYS = 3;
-  var APP_VERSION = '1.7';
+  var APP_VERSION = '1.8';
   var I18N = window.I18N;
 
   // ---------- Data ----------
@@ -60,8 +60,15 @@
     if (!c || typeof c !== 'object' || typeof c.id !== 'string' || !ID_RE.test(c.id)) return null;
     var name = str(c.name, LIMITS.name).trim();
     if (!name) return null;
-    return { id: c.id, name: name, phone: str(c.phone, LIMITS.phone), place: str(c.place, LIMITS.place),
-      createdAt: str(c.createdAt, LIMITS.createdAt) };
+    return withDeleted({ id: c.id, name: name, phone: str(c.phone, LIMITS.phone), place: str(c.place, LIMITS.place),
+      createdAt: str(c.createdAt, LIMITS.createdAt) }, c);
+  }
+
+  // deletedAt: when the record was moved to the recycle bin (milliseconds).
+  function withDeleted(out, src) {
+    var d = Number(src.deletedAt);
+    if (isFinite(d) && d > 0) out.deletedAt = Math.round(d);
+    return out;
   }
 
   function cleanEntry(e) {
@@ -71,8 +78,8 @@
     var amount = Number(e.amount);
     if (!Number.isInteger(amount) || amount <= 0 || amount > MAX_AMOUNT) return null;
     if (typeof e.date !== 'string' || !DATE_RE.test(e.date)) return null;
-    return { id: e.id, customerId: e.customerId, type: e.type, amount: amount,
-      note: str(e.note, LIMITS.note), date: e.date, createdAt: str(e.createdAt, LIMITS.createdAt) };
+    return withDeleted({ id: e.id, customerId: e.customerId, type: e.type, amount: amount,
+      note: str(e.note, LIMITS.note), date: e.date, createdAt: str(e.createdAt, LIMITS.createdAt) }, e);
   }
 
   function cleanList(list, fn) {
@@ -136,11 +143,11 @@
   }
 
   function normC(c) {
-    return { id: c.id, name: c.name || '', phone: c.phone || '', place: c.place || '', createdAt: c.createdAt || '' };
+    return withDeleted({ id: c.id, name: c.name || '', phone: c.phone || '', place: c.place || '', createdAt: c.createdAt || '' }, c);
   }
   function normE(e) {
-    return { id: e.id, customerId: e.customerId, type: e.type === 'payment' ? 'payment' : 'debt', amount: +e.amount || 0,
-      note: e.note || '', date: e.date || '', createdAt: e.createdAt || '' };
+    return withDeleted({ id: e.id, customerId: e.customerId, type: e.type === 'payment' ? 'payment' : 'debt', amount: +e.amount || 0,
+      note: e.note || '', date: e.date || '', createdAt: e.createdAt || '' }, e);
   }
 
   // Combine the server's list with this phone's list without ever losing a
@@ -225,6 +232,7 @@
       authKnown = true;
       if (user) {
         account = user;
+        setTimeout(purgeBin, 4000);
         if (signingIn) toast(t('signedIn'));
       } else {
         if (signingOut) {
@@ -236,6 +244,7 @@
           data.settings.lang = keepLang;
           save();
           toast(t('signedOut'));
+          pinSave(null);
         }
         // If the login simply expired, keep the records on the phone;
         // they belong to data.owner and are merged back at the next sign-in.
@@ -326,7 +335,11 @@
   // Sign out only when every record is safely online, because signing out
   // removes the records from this phone.
   function signOut() {
-    if (!cloud() || !confirm(t('confirmSignOut'))) return;
+    if (!cloud()) return;
+    askPin(t('confirmSignOut')).then(function (ok) { if (ok) signOutConfirmed(); });
+  }
+
+  function signOutConfirmed() {
     var cl = window.DeynCloud;
     toast(t('signingOutWait'), 30000);
     if (data.dirty || unsyncedCount()) cl.retryUpload();
@@ -410,9 +423,47 @@
     return (neg ? '-' : '') + cur + s;
   }
 
+  // ---------- Recycle bin ----------
+  // Deleting only moves records to the bin for BIN_DAYS days; the server
+  // refuses permanent deletion before that (firestore.rules).
+  var BIN_DAYS = 30;
+  var DAY = 864e5;
+
+  function customerGone(id) {
+    var c = data.customers.find(function (x) { return x.id === id; });
+    return !c || !!c.deletedAt;
+  }
+  function liveCustomers() { return data.customers.filter(function (c) { return !c.deletedAt; }); }
+  function liveEntries() {
+    return data.entries.filter(function (e) { return !e.deletedAt && !customerGone(e.customerId); });
+  }
+  // Records that went to the bin together with their customer (same
+  // moment; a little slack because times come from the server).
+  function binnedWith(e, c) {
+    return e.customerId === c.id && !!e.deletedAt && Math.abs(e.deletedAt - c.deletedAt) < 120000;
+  }
+
+  function daysLeft(x) { return Math.max(0, Math.ceil((x.deletedAt + BIN_DAYS * DAY - Date.now()) / DAY)); }
+
+  // Permanently remove what has been in the bin long enough (one extra day
+  // of margin so the server agrees it is old enough).
+  function purgeBin() {
+    var cutoff = Date.now() - (BIN_DAYS + 1) * DAY;
+    var old = function (x) { return x.deletedAt && x.deletedAt < cutoff; };
+    var gone = data.customers.filter(old).map(function (x) { return ['customers', x.id]; })
+      .concat(data.entries.filter(old).map(function (x) { return ['entries', x.id]; }));
+    if (!gone.length) return;
+    if (data.owner && !cloud()) return; // wait until signed in, so the server copy goes too
+    data.customers = data.customers.filter(function (x) { return !old(x); });
+    data.entries = data.entries.filter(function (x) { return !old(x); });
+    var c = cloud();
+    if (c) c.purge(gone);
+    save();
+  }
+
   function balanceOf(customerId) {
     var b = 0;
-    data.entries.forEach(function (e) {
+    liveEntries().forEach(function (e) {
       if (e.customerId !== customerId) return;
       b += e.type === 'debt' ? e.amount : -e.amount;
     });
@@ -420,7 +471,7 @@
   }
 
   function entriesOf(customerId) {
-    return data.entries
+    return liveEntries()
       .filter(function (e) { return e.customerId === customerId; })
       .sort(function (a, b) { return (b.date + b.createdAt).localeCompare(a.date + a.createdAt); });
   }
@@ -682,6 +733,212 @@
     el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake');
   }
 
+  // ---------- PIN lock ----------
+  // A 4-number secret code, kept only on this phone (as a salted PBKDF2
+  // hash, never the number itself). Asked when the app opens, after the
+  // phone was away for a minute, and before deleting, restoring a backup,
+  // signing out or changing the PIN. It stops other people using the
+  // phone; the server rules are what protect the records online.
+  var PIN_KEY = 'debtbook.pin';
+  var PIN_LEN = 4;
+  var LOCK_AFTER_MS = 60000;
+  var pinUnlocked = false;
+
+  function pinState() {
+    try { return JSON.parse(localStorage.getItem(PIN_KEY) || 'null'); } catch (e) { return null; }
+  }
+  function pinSave(st) {
+    try {
+      if (st) localStorage.setItem(PIN_KEY, JSON.stringify(st)); else localStorage.removeItem(PIN_KEY);
+    } catch (e) {}
+  }
+  function hasPin() { var st = pinState(); return !!(st && st.hash); }
+
+  function toHex(buf) { return Array.from(new Uint8Array(buf)).map(function (b) { return b.toString(16).padStart(2, '0'); }).join(''); }
+  function hashPin(pin, saltHex) {
+    var salt = new Uint8Array(saltHex.match(/../g).map(function (h) { return parseInt(h, 16); }));
+    return crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits'])
+      .then(function (key) {
+        return crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: salt, iterations: 150000 }, key, 256);
+      }).then(toHex);
+  }
+  function setNewPin(pin) {
+    var salt = toHex(crypto.getRandomValues(new Uint8Array(16)));
+    return hashPin(pin, salt).then(function (h) { pinSave({ hash: h, salt: salt, fails: 0, until: 0 }); });
+  }
+  // Wrong tries make you wait: 5 -> 30 s, 8 -> 5 min, 10+ -> 30 min.
+  function waitAfter(fails) { return fails >= 10 ? 1800000 : fails >= 8 ? 300000 : fails >= 5 ? 30000 : 0; }
+  function checkPin(pin) {
+    var st = pinState();
+    if (!st) return Promise.resolve(true);
+    if (Date.now() < (st.until || 0)) return Promise.resolve('wait');
+    return hashPin(pin, st.salt).then(function (h) {
+      if (h === st.hash) { st.fails = 0; st.until = 0; pinSave(st); return true; }
+      st.fails = (st.fails || 0) + 1;
+      st.until = Date.now() + waitAfter(st.fails);
+      pinSave(st);
+      return false;
+    });
+  }
+
+  // The PIN screen. mode: 'lock' (no way out except the PIN or "forgot"),
+  // 'ask' (cancel allowed), 'new' (choose + repeat). Resolves with the PIN
+  // typed (for 'new') or true/false.
+  var pinScreenOpen = false;
+  function pinScreen(mode, message) {
+    return new Promise(function (resolve) {
+      pinScreenOpen = true;
+      var el = document.createElement('div');
+      el.className = 'pin-screen';
+      el.setAttribute('role', 'dialog');
+      el.setAttribute('aria-modal', 'true');
+      var keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'back'];
+      el.innerHTML =
+        (mode !== 'lock' ? '<button type="button" class="icon-btn pin-close" aria-label="' + esc(t('cancel')) + '">' + icon('x') + '</button>' : '') +
+        '<div class="pin-top"><span class="pin-lock">' + icon('lock') + '</span>' +
+        '<div class="pin-title"></div>' +
+        (message ? '<div class="pin-msg">' + esc(message) + '</div>' : '') +
+        '<div class="pin-dots">' + new Array(PIN_LEN + 1).join('<span></span>') + '</div>' +
+        '<div class="pin-note" aria-live="polite"></div></div>' +
+        '<div class="keypad pin-keys">' + keys.map(function (k) {
+          if (!k) return '<span></span>';
+          return '<button type="button" class="key' + (k === 'back' ? ' back' : '') + '" data-k="' + k + '"' +
+            (k === 'back' ? ' aria-label="⌫"' : '') + '>' + (k === 'back' ? icon('backspace') : k) + '</button>';
+        }).join('') + '</div>' +
+        (mode === 'lock' || mode === 'ask' ? '<button type="button" class="link-btn pin-forgot">' + esc(t('pinForgot')) + '</button>' : '');
+      document.body.appendChild(el);
+      document.body.classList.add('pin-open');
+
+      var typed = '', first = null, busy = false;
+      var titleEl2 = el.querySelector('.pin-title');
+      var dots = el.querySelectorAll('.pin-dots span');
+      var note = el.querySelector('.pin-note');
+      function setTitle() {
+        titleEl2.textContent = mode === 'new' ? (first ? t('pinAgain') : t('pinChoose')) : t('pinEnter');
+      }
+      function draw() { dots.forEach(function (d, i) { d.classList.toggle('on', i < typed.length); }); }
+      function close(result) {
+        document.removeEventListener('keydown', onKey);
+        el.remove();
+        document.body.classList.remove('pin-open');
+        pinScreenOpen = false;
+        resolve(result);
+      }
+      function wrong(msg) {
+        typed = ''; draw();
+        note.textContent = msg;
+        shake(el.querySelector('.pin-dots'));
+      }
+      function full() {
+        if (mode === 'new') {
+          if (!first) { first = typed; typed = ''; draw(); setTitle(); note.textContent = ''; return; }
+          if (typed !== first) { first = null; setTitle(); wrong(t('pinMismatch')); return; }
+          close(typed);
+          return;
+        }
+        busy = true;
+        checkPin(typed).then(function (r) {
+          busy = false;
+          if (r === true) { close(true); return; }
+          var st = pinState() || {};
+          var secs = Math.ceil(((st.until || 0) - Date.now()) / 1000);
+          wrong(secs > 0 ? t('pinWait', { s: secs }) : t('pinWrong'));
+        });
+      }
+      function press(k) {
+        if (busy) return;
+        if (k === 'back') { typed = typed.slice(0, -1); draw(); return; }
+        if (typed.length >= PIN_LEN) return;
+        typed += k; draw();
+        if (typed.length === PIN_LEN) setTimeout(full, 120);
+      }
+      function onKey(e) {
+        if (/^[0-9]$/.test(e.key)) press(e.key);
+        else if (e.key === 'Backspace') press('back');
+        else if (e.key === 'Escape' && mode !== 'lock') close(false);
+      }
+      el.querySelectorAll('[data-k]').forEach(function (b) {
+        b.addEventListener('click', function () { press(b.dataset.k); });
+      });
+      var closeBtn = el.querySelector('.pin-close');
+      if (closeBtn) closeBtn.addEventListener('click', function () { close(false); });
+      var forgot = el.querySelector('.pin-forgot');
+      if (forgot) forgot.addEventListener('click', function () {
+        forgotPin().then(function (reset) { if (reset) close(true); });
+      });
+      document.addEventListener('keydown', onKey);
+      setTitle();
+    });
+  }
+
+  // Ask for the PIN before something risky. Without a PIN, a plain
+  // "are you sure?" question is used.
+  function askPin(question) {
+    if (!hasPin()) return Promise.resolve(confirm(question));
+    return pinScreen('ask', question);
+  }
+
+  function lockNow() {
+    if (!hasPin() || pinScreenOpen) return;
+    pinUnlocked = false;
+    if (dialog.open) dialog.close();
+    pinScreen('lock').then(function () { pinUnlocked = true; });
+  }
+
+  // Forgot the PIN: the owner proves who they are with Google (records
+  // stay). Without a Google sign-in, the only way is to erase this phone's
+  // records (anyone could do that anyway by clearing the browser).
+  function forgotPin() {
+    var cl = cloud();
+    if (cl) {
+      if (!confirm(t('pinForgotGoogle'))) return Promise.resolve(false);
+      return cl.reauth().then(function (ok) {
+        if (!ok) { alert(t('pinForgotFailed')); return false; }
+        pinSave(null);
+        toast(t('pinRemoved'));
+        setTimeout(function () { if (confirm(t('pinSetAgain'))) setupPin(); }, 400);
+        return true;
+      });
+    }
+    if (!confirm(t('pinForgotErase')) || !confirm(t('pinForgotErase2'))) return Promise.resolve(false);
+    try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+    pinSave(null);
+    location.reload();
+    return Promise.resolve(false);
+  }
+
+  function setupPin() {
+    return pinScreen('new').then(function (pin) {
+      if (!pin) return false;
+      return setNewPin(pin).then(function () {
+        toast(t('pinSaved'));
+        pinUnlocked = true;
+        render();
+        return true;
+      });
+    });
+  }
+
+  function changePin() {
+    askPin(t('pinChange')).then(function (ok) { if (ok) setupPin(); });
+  }
+
+  function removePin() {
+    askPin(t('pinTurnOff')).then(function (ok) {
+      if (!ok) return;
+      pinSave(null);
+      toast(t('pinRemoved'));
+      render();
+    });
+  }
+
+  // Lock again when the app comes back after being away for a while.
+  var hiddenAt = 0;
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') hiddenAt = Date.now();
+    else if (hiddenAt && Date.now() - hiddenAt > LOCK_AFTER_MS) lockNow();
+  });
+
   // ---------- Page frame (app bar + bottom menu) ----------
   var app = document.getElementById('app');
   var appbar = document.getElementById('appbar');
@@ -730,8 +987,12 @@
     else if (hash === '#/customers') renderCustomers();
     else if (hash === '#/reports') renderReports();
     else if (hash === '#/settings') renderSettings();
+    else if (hash === '#/bin') renderBin();
     else renderHome();
     wire(app);
+    app.querySelectorAll('[data-set-pin]').forEach(function (b) { b.addEventListener('click', setupPin); });
+    var pc = document.getElementById('pinChangeBtn'); if (pc) pc.addEventListener('click', changePin);
+    var po = document.getElementById('pinOffBtn'); if (po) po.addEventListener('click', removePin);
     updateBackupBanner();
   }
 
@@ -745,13 +1006,13 @@
   }
 
   function sumIn(type, range) {
-    return data.entries.reduce(function (sum, e) {
+    return liveEntries().reduce(function (sum, e) {
       return e.type === type && e.date >= range.start && e.date < range.end ? sum + e.amount : sum;
     }, 0);
   }
 
   function customerRows() {
-    return data.customers.map(function (c) {
+    return liveCustomers().map(function (c) {
       return { c: c, bal: balanceOf(c.id), last: lastActivity(c.id) };
     });
   }
@@ -839,6 +1100,13 @@
       html += '<section class="card"><h3>' + esc(t('chooseLanguage')) + '</h3><div style="margin-top:10px">' + langSegmented() + '</div></section>';
     }
     if (cloudAvailable && authKnown && !account) html += signInCardShortHtml();
+    else if (rows.length && !hasPin() && !pinOfferDismissed()) {
+      html += '<section class="card cloud short">' +
+        '<span class="chip brand">' + icon('lock') + '</span>' +
+        '<div class="body"><p><b>' + esc(t('pinOffer')) + '</b></p>' +
+        '<div class="btn-row"><button type="button" class="btn" data-set-pin>' + icon('lock') + esc(t('pinTurnOn')) + '</button>' +
+        '<button type="button" class="btn ghost" id="pinLaterBtn">' + esc(t('later')) + '</button></div></div></section>';
+    }
 
     if (!rows.length) {
       html += '<div class="list-card">' + emptyState('wallet', t('getStarted'), t('getStartedText'), true) + '</div>';
@@ -854,6 +1122,11 @@
     html += fab();
     app.innerHTML = html;
 
+    var later = document.getElementById('pinLaterBtn');
+    if (later) later.addEventListener('click', function () {
+      try { localStorage.setItem('debtbook.pinOfferLater', String(Date.now() + 7 * DAY)); } catch (e) {}
+      render();
+    });
     var search = document.getElementById('search');
     if (search) search.addEventListener('input', function () {
       query = search.value;
@@ -863,6 +1136,10 @@
       s2.focus();
       try { s2.setSelectionRange(pos, pos); } catch (e) {}
     });
+  }
+
+  function pinOfferDismissed() {
+    try { return Number(localStorage.getItem('debtbook.pinOfferLater') || 0) > Date.now(); } catch (e) { return false; }
   }
 
   // Old link to the customer list: it is the home screen now.
@@ -876,7 +1153,7 @@
 
   function renderCustomer(id) {
     var c = findCustomer(id);
-    if (!c) { location.hash = '#/'; return; }
+    if (!c || c.deletedAt) { location.hash = '#/'; return; }
     frame({
       title: c.name, back: true,
       action: '<button type="button" class="icon-btn" id="editBtn" aria-label="' + esc(t('edit')) + '">' + icon('edit') + '</button>'
@@ -925,21 +1202,30 @@
       b.addEventListener('click', function () {
         var e = data.entries.find(function (x) { return x.id === b.dataset.del; });
         if (!e) return;
-        if (!confirm(t('confirmDelRecord', { amt: money(e.amount) }))) return;
-        data.entries = data.entries.filter(function (x) { return x.id !== e.id; });
-        changed(function (cl) { cl.deleteEntry(e.id); });
-        render(); toast(t('recordDeleted'));
+        askPin(t('confirmDelRecord', { amt: money(e.amount) })).then(function (ok) {
+          if (!ok) return;
+          e.deletedAt = Date.now();
+          changed(function (cl) { cl.putEntry(normE(e)); });
+          render(); toast(t('movedToBin'));
+        });
       });
     });
     document.getElementById('delCustomerBtn').addEventListener('click', function () {
       var q = t('confirmDelCustomer', { name: c.name }) + (bal > 0 ? '\n\n' + t('stillOwes', { amt: money(bal) }) : '');
-      if (!confirm(q)) return;
-      var entryIds = data.entries.filter(function (x) { return x.customerId === c.id; }).map(function (x) { return x.id; });
-      data.customers = data.customers.filter(function (x) { return x.id !== c.id; });
-      data.entries = data.entries.filter(function (x) { return x.customerId !== c.id; });
-      changed(function (cl) { cl.deleteCustomer(c.id, entryIds); });
-      location.hash = '#/';
-      toast(t('customerDeleted'));
+      askPin(q).then(function (ok) {
+        if (!ok) return;
+        // The customer and their records go to the bin together (same time),
+        // so bringing the customer back also brings back those records.
+        var when = Date.now();
+        c.deletedAt = when;
+        var moved = data.entries.filter(function (x) { return x.customerId === c.id && !x.deletedAt; });
+        moved.forEach(function (x) { x.deletedAt = when; });
+        changed(function (cl) {
+          cl.putBatch({ customers: [normC(c)], entries: moved.map(normE) });
+        });
+        location.hash = '#/';
+        toast(t('movedToBin'));
+      });
     });
   }
 
@@ -972,7 +1258,7 @@
       html += '<div class="section-head"><h2>' + esc(t('topOwing')) + '</h2></div>' +
         '<div class="list-card">' + top.map(customerItem).join('') + '</div>';
     }
-    var recent = data.entries.slice().sort(function (a, b) {
+    var recent = liveEntries().sort(function (a, b) {
       return (b.date + b.createdAt).localeCompare(a.date + a.createdAt);
     }).slice(0, 10);
     if (recent.length) {
@@ -988,6 +1274,63 @@
       b.addEventListener('click', function () { reportMonth = +b.dataset.month; render(); });
     });
     document.getElementById('excelBtn').addEventListener('click', exportExcel);
+  }
+
+  function binCount() {
+    return data.customers.filter(function (c) { return c.deletedAt; }).length +
+      data.entries.filter(function (e) { return e.deletedAt && !customerGone(e.customerId); }).length;
+  }
+
+  // ---------- Recycle bin page ----------
+  function renderBin() {
+    frame({ title: t('binTitle'), back: true });
+    var cs = data.customers.filter(function (c) { return c.deletedAt; });
+    var es = data.entries.filter(function (e) { return e.deletedAt && !customerGone(e.customerId); });
+    var html = '<p class="hint" style="margin:0 4px 14px">' + icon('shield') + ' ' + esc(t('binExplain', { n: BIN_DAYS })) + '</p>';
+    if (!cs.length && !es.length) {
+      html += '<div class="list-card">' + emptyState('trash', '', t('binEmpty')) + '</div>';
+    } else {
+      var rows = cs.map(function (c) {
+        var owed = data.entries.filter(function (e) { return binnedWith(e, c); })
+          .reduce(function (sum, e) { return sum + (e.type === 'debt' ? e.amount : -e.amount); }, 0);
+        return { at: c.deletedAt, html: '<div class="item big wrap">' + avatar(c) +
+          '<span class="main"><div class="title">' + esc(c.name) + '</div><div class="meta">' + esc(t('daysLeft', { n: daysLeft(c) })) + '</div></span>' +
+          (owed > 0 ? '<span class="end"><div class="amount num owe-text">' + money(owed) + '</div></span>' : '') +
+          '<button type="button" class="btn soft small" data-restore-c="' + esc(c.id) + '">' + icon('undo') + esc(t('restoreItem')) + '</button></div>' };
+      }).concat(es.map(function (e) {
+        var c = findCustomer(e.customerId);
+        var isDebt = e.type === 'debt';
+        return { at: e.deletedAt, html: '<div class="item wrap"><span class="tx-icon ' + e.type + '">' + icon(isDebt ? 'basket' : 'cash') + '</span>' +
+          '<span class="main"><div class="title">' + esc(c ? c.name : '?') + ' · <span class="num ' + (isDebt ? 'owe-text' : 'paid-text') + '">' + money(e.amount) + '</span></div>' +
+          '<div class="meta">' + esc(niceDate(e.date) + ' · ' + t('daysLeft', { n: daysLeft(e) })) + '</div></span>' +
+          '<button type="button" class="btn soft small" data-restore-e="' + esc(e.id) + '">' + icon('undo') + esc(t('restoreItem')) + '</button></div>' };
+      })).sort(function (a, b) { return b.at - a.at; });
+      html += '<div class="list-card">' + rows.map(function (r) { return r.html; }).join('') + '</div>';
+    }
+    app.innerHTML = html;
+
+    app.querySelectorAll('[data-restore-c]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var c = findCustomer(b.dataset.restoreC);
+        if (!c) return;
+        var back = data.entries.filter(function (x) { return binnedWith(x, c); });
+        delete c.deletedAt;
+        back.forEach(function (x) { delete x.deletedAt; });
+        changed(function (cl) {
+          cl.putBatch({ customers: [normC(c)], entries: back.map(normE) });
+        });
+        render(); toast(t('restoredItem'));
+      });
+    });
+    app.querySelectorAll('[data-restore-e]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var e = data.entries.find(function (x) { return x.id === b.dataset.restoreE; });
+        if (!e) return;
+        delete e.deletedAt;
+        changed(function (cl) { cl.putEntry(normE(e)); });
+        render(); toast(t('restoredItem'));
+      });
+    });
   }
 
   // ---------- Settings ----------
@@ -1017,6 +1360,16 @@
       }
     }
 
+    html += '<div class="group-title">' + esc(t('pinSection')) + '</div>' +
+      '<div class="list-card">' + (hasPin()
+        ? '<div class="account"><span class="avatar" style="background:var(--paid-soft);color:var(--paid)">' + icon('lock') + '</span>' +
+            '<div class="main"><div class="name">' + esc(t('pinOnTitle')) + '</div><div class="meta">' + esc(t('pinOn')) + '</div></div></div>' +
+          '<button type="button" class="row-btn" id="pinChangeBtn"><span class="chip">' + icon('edit') + '</span><span class="main">' + esc(t('pinChange')) + '</span>' + icon('chevron') + '</button>' +
+          '<button type="button" class="row-btn danger" id="pinOffBtn"><span class="chip">' + icon('x') + '</span><span class="main">' + esc(t('pinTurnOff')) + '</span></button>'
+        : '<button type="button" class="row-btn" data-set-pin><span class="chip">' + icon('lock') + '</span>' +
+            '<span class="main">' + esc(t('pinTurnOn')) + '<span class="meta">' + esc(t('pinOffExplain')) + '</span></span>' + icon('chevron') + '</button>') +
+      '</div>';
+
     html += '<div class="group-title">' + esc(t('language')) + '</div>' + langSegmented();
 
     html += '<div class="group-title">' + esc(t('shop')) + '</div>' +
@@ -1041,6 +1394,9 @@
         ? '<p class="hint" style="margin-top:0">' + icon('cloud') + ' ' + esc(t('backupNotNeeded')) + '</p>' +
           '<details class="more"><summary>' + esc(t('backupAdvanced')) + '</summary>' + backupRows + '</details>'
         : backupRows) +
+      '<div class="group-title">' + esc(t('binTitle')) + '</div>' +
+      '<div class="list-card"><button type="button" class="row-btn" data-go="#/bin"><span class="chip">' + icon('trash') + '</span>' +
+        '<span class="main">' + esc(t('binTitle')) + '<span class="meta">' + esc(t('binCount', { n: binCount() })) + '</span></span>' + icon('chevron') + '</button></div>' +
       '<input type="file" id="restoreFile" accept=".xlsx,.json,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>';
 
     html += '<div class="footer-note">' + icon('shield', '') + '<br>' + esc(t('securityNote')) + '<br>' + esc(t('version', { v: APP_VERSION })) + '</div>';
@@ -1128,7 +1484,8 @@
         alert(t('notBackup'));
         return;
       }
-      if (!confirm(t('confirmRestore', { c: incoming.customers.length, e: incoming.entries.length }))) return;
+      askPin(t('confirmRestore', { c: incoming.customers.length, e: incoming.entries.length })).then(function (ok) {
+      if (!ok) return;
       incoming.owner = data.owner;
       incoming.settings = Object.assign({}, data.settings, raw.settings ? incoming.settings : {}, { lang: data.settings.lang });
       incoming.lastBackup = data.lastBackup;
@@ -1137,6 +1494,7 @@
       applyStaticText();
       toast(t('restored'));
       if (location.hash === '#/' || !location.hash) render(); else location.hash = '#/';
+      });
     });
   }
 
@@ -1157,9 +1515,9 @@
     return loadExcel().then(function (lib) {
       var cur = data.settings.currency || '';
       var amountCol = function (key) { return t(key) + (cur ? ' (' + cur + ')' : ''); };
-      var rows = data.customers.map(function (c) {
+      var rows = liveCustomers().map(function (c) {
         var taken = 0, paid = 0;
-        data.entries.forEach(function (e) {
+        liveEntries().forEach(function (e) {
           if (e.customerId !== c.id) return;
           if (e.type === 'debt') taken += e.amount; else paid += e.amount;
         });
@@ -1178,7 +1536,7 @@
       // History in date order, with each customer's balance after every record.
       var running = {};
       var history = [[t('colDate'), t('colCustomer'), t('colType'), amountCol('colAmount'), t('colNote'), amountCol('colBalanceAfter')]];
-      data.entries.slice().sort(function (a, b) {
+      liveEntries().sort(function (a, b) {
         return (a.date + a.createdAt).localeCompare(b.date + b.createdAt);
       }).forEach(function (e) {
         var c = findCustomer(e.customerId);
@@ -1269,5 +1627,7 @@
   }
 
   applyStaticText();
+  purgeBin();
   render();
+  lockNow();
 })();
