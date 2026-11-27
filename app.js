@@ -10,7 +10,7 @@
 
   var STORAGE_KEY = 'debtbook.v1';
   var BACKUP_REMIND_DAYS = 3;
-  var APP_VERSION = '1.9';
+  var APP_VERSION = '1.10';
   var I18N = window.I18N;
 
   // ---------- Data ----------
@@ -331,7 +331,8 @@
       statsTimer = null;
       var cl = cloud();
       if (!cl || !cl.putStats) return;
-      try { localStorage.setItem('debtbook.statsAt', String(Date.now())); } catch (e) {}
+      // Remember the time only when the server accepted the counts, so a
+      // refused try is repeated next time instead of 3 hours later.
       cl.putStats({
         shopName: str(data.settings.shopName, LIMITS.shopName),
         customers: liveCustomers().length,
@@ -339,6 +340,8 @@
         lang: lang(),
         version: APP_VERSION,
         platform: IS_IOS ? 'iphone' : /Android/i.test(navigator.userAgent) ? 'android' : 'computer'
+      }).then(function (ok) {
+        if (ok) { try { localStorage.setItem('debtbook.statsAt', String(Date.now())); } catch (e) {} }
       }).catch(function (e) { console.error(e); });
     }, 5000);
   }

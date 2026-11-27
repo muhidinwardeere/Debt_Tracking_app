@@ -269,7 +269,7 @@ function start() {
     async putStats(st) {
       const ref = doc(db, userPath('stats', 'summary'));
       let isNew = false;
-      try { isNew = !(await getDoc(ref)).exists(); } catch (e) { return; }
+      try { isNew = !(await getDoc(ref)).exists(); } catch (e) { return false; }
       const out = {
         shopName: st.shopName, customers: st.customers, entries: st.entries,
         lang: st.lang, version: st.version, platform: st.platform,
@@ -278,7 +278,11 @@ function start() {
       if (isNew) out.firstSeen = serverTimestamp();
       // Not a shop record: if it fails, just try again another time
       // (no warning, no re-upload of records).
-      setDoc(ref, out, { merge: true }).catch((e) => console.warn('Usage counts not sent', e.code));
+      // Resolves true once the server has them, false if refused.
+      return setDoc(ref, out, { merge: true }).then(() => true, (e) => {
+        console.warn('Usage counts not sent', e.code);
+        return false;
+      });
     },
 
     // Admin page: every shop's usage counts (the rules allow this only for
