@@ -160,6 +160,8 @@ window.I18N = {
     iosStep1: 'Tap Share (Safari: bottom of the screen; Chrome: top, next to the address)',
     iosStep2: 'Choose "Add to Home Screen"',
     iosStep3: 'Open Deyn Book from the home screen and sign in with the same Google account',
+    notSaving: 'Not saving online',
+    notSavingHelp: 'Your records are safe on this phone, but they are not reaching online storage. Check your internet. If this stays, send this code to support: {code}',
     chooseLanguage: 'Choose your language',
     months: 'Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec'
   },
@@ -316,6 +318,8 @@ window.I18N = {
     iosStep1: 'Riix Share (Safari: hoose ee shaashadda; Chrome: kore, agagaarka cinwaanka)',
     iosStep2: 'Dooro "Add to Home Screen"',
     iosStep3: 'Ka fur Deyn Book home screen-ka, kuna gal isla akoonka Google',
+    notSaving: 'Online laguma kaydinayo',
+    notSavingHelp: 'Diiwaannadaadu telefoonkan way ku jiraan, laakiin online ma gaarayaan. Hubi internet-ka. Haddii ay sii jirto, u dir koodhkan caawinta: {code}',
     chooseLanguage: 'Dooro luqaddaada',
     months: 'Jan,Feb,Mar,Abr,May,Jun,Luu,Ogo,Seb,Okt,Nof,Dis'
   }

@@ -10,7 +10,7 @@
 
   var STORAGE_KEY = 'debtbook.v1';
   var BACKUP_REMIND_DAYS = 3;
-  var APP_VERSION = '1.3';
+  var APP_VERSION = '1.4';
   var I18N = window.I18N;
 
   // ---------- Data ----------
@@ -74,6 +74,7 @@
   var signingIn = false;
   var signingOut = false;
   var cloudErrorShown = false;
+  var cloudErrorCode = null;   // set while online saving is failing
 
   // The cloud API, only while signed in.
   function cloud() {
@@ -165,8 +166,9 @@
       safeRender();
     },
 
-    applyRemote: function (part) {
+    applyRemote: function (part, meta) {
       var changedAny = false;
+      if (meta && !meta.fromCache && cloudErrorCode) { cloudErrorCode = null; changedAny = true; }
       if (part.customers) {
         var cs = part.customers.map(normC);
         if (!sameList(cs, data.customers.map(normC))) { data.customers = cs; changedAny = true; }
@@ -187,10 +189,12 @@
       safeRender();
     },
 
+    // Online saving is failing (e.g. database missing or rules not
+    // published). Show it clearly until the next good update.
     cloudError: function (e) {
-      if (cloudErrorShown) return;
-      cloudErrorShown = true;
-      toast(t('cloudProblem') + (e && e.code ? ' (' + e.code + ')' : ''));
+      cloudErrorCode = (e && e.code) || 'unknown';
+      if (!cloudErrorShown) { cloudErrorShown = true; toast(t('cloudProblem')); }
+      safeRender();
     },
 
     toastKey: function (key) { toast(t(key)); }
@@ -518,7 +522,8 @@
     appbarAction.innerHTML = opts.action || '';
     var showSync = opts.nav === 'home' && cloudAvailable && authKnown && account;
     syncBadge.hidden = !showSync;
-    if (showSync) syncBadge.innerHTML = icon('check') + esc(t('synced'));
+    syncBadge.classList.toggle('bad', !!cloudErrorCode);
+    if (showSync) syncBadge.innerHTML = cloudErrorCode ? icon('alert') + esc(t('notSaving')) : icon('check') + esc(t('synced'));
     app.classList.toggle('flush-top', !!opts.flush);
     if (opts.nav) {
       bottomNav.hidden = false;
@@ -830,7 +835,10 @@
           '<div class="account"><span class="avatar">' + esc(initials(who)) + '</span>' +
             '<div class="main"><div class="name">' + esc(account.name || account.email) + '</div>' +
             (account.name && account.email ? '<div class="meta">' + esc(account.email) + '</div>' : '') +
-            '<span class="status-pill">' + icon('check') + esc(t('synced')) + '</span></div></div>' +
+            (cloudErrorCode
+              ? '<span class="status-pill bad">' + icon('alert') + esc(t('notSaving')) + '</span>' +
+                '<div class="meta" style="margin-top:6px">' + esc(t('notSavingHelp', { code: cloudErrorCode })) + '</div>'
+              : '<span class="status-pill">' + icon('check') + esc(t('synced')) + '</span>') + '</div></div>' +
           '<button type="button" class="row-btn danger" data-signout><span class="chip">' + icon('logout') + '</span>' +
             '<span class="main">' + esc(t('signOut')) + '</span></button>' +
         '</div>';
