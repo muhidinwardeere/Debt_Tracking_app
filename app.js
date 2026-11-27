@@ -843,7 +843,7 @@
         ? '<p class="hint" style="margin-top:0">' + icon('cloud') + ' ' + esc(t('backupNotNeeded')) + '</p>' +
           '<details class="more"><summary>' + esc(t('backupAdvanced')) + '</summary>' + backupRows + '</details>'
         : backupRows) +
-      '<input type="file" id="restoreFile" accept=".json,application/json" hidden>';
+      '<input type="file" id="restoreFile" accept=".xlsx,.json,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>';
 
     html += '<div class="footer-note">' + icon('shield', '') + '<br>' + esc(t('securityNote')) + '<br>' + esc(t('version', { v: APP_VERSION })) + '</div>';
     app.innerHTML = html;
@@ -897,43 +897,66 @@
   }
 
   function backup() {
-    var copy = Object.assign({}, data, { exportedAt: new Date().toISOString() });
-    var blob = new Blob([JSON.stringify(copy, null, 2)], { type: 'application/json' });
-    shareOrDownload(blob, 'deyn-book-backup_' + fileStamp() + '.json', t('appName')).then(function (done) {
+    makeExcel().then(function (blob) {
+      return shareOrDownload(blob, excelName(), t('appName'));
+    }).then(function (done) {
       if (!done) return;
       data.lastBackup = new Date().toISOString();
       save();
       toast(t('backupMade'));
       render();
+    }).catch(function (e) {
+      console.error(e);
+      alert(t('excelFailed'));
     });
   }
 
+  function readBackupFile(file) {
+    var isExcel = /\.xlsx$/i.test(file.name) || /spreadsheet/.test(file.type);
+    if (isExcel) {
+      return Promise.all([loadExcel(), file.arrayBuffer()]).then(function (r) {
+        var labels = [I18N.en.debtOn, I18N.so.debtOn, I18N.en.tagDebt, I18N.so.tagDebt];
+        var totalsRow = [I18N.en.totalRow, I18N.so.totalRow];
+        return r[0].readBackup(r[1], labels, totalsRow);
+      });
+    }
+    return file.text().then(function (txt) { return JSON.parse(txt); });
+  }
+
   function restore(file) {
-    var reader = new FileReader();
-    reader.onload = function () {
-      var incoming;
-      try { incoming = normalize(JSON.parse(reader.result)); } catch (e) { incoming = null; }
+    readBackupFile(file).catch(function (e) { console.error(e); return null; }).then(function (raw) {
+      var incoming = raw ? normalize(raw) : null;
       if (!incoming || (!incoming.customers.length && !incoming.entries.length)) {
         alert(t('notBackup'));
         return;
       }
       if (!confirm(t('confirmRestore', { c: incoming.customers.length, e: incoming.entries.length }))) return;
       incoming.owner = data.owner;
-      incoming.settings.lang = data.settings.lang || incoming.settings.lang;
+      incoming.settings = Object.assign({}, data.settings, raw.settings ? incoming.settings : {}, { lang: data.settings.lang });
+      incoming.lastBackup = data.lastBackup;
       data = incoming;
       changed(function (cl) { cl.replaceAll({ customers: data.customers.map(normC), entries: data.entries.map(normE), settings: data.settings }); });
       applyStaticText();
       toast(t('restored'));
       if (location.hash === '#/' || !location.hash) render(); else location.hash = '#/';
-    };
-    reader.readAsText(file);
+    });
   }
 
   // Full records as a real Excel file (two sheets) that anyone can open.
+  // Every Excel file is also a backup: it carries the exact records in a
+  // hidden sheet, so Restore can read it back.
   var excelLib = null;
-  function exportExcel() {
-    var loading = excelLib || import('./excel.bundle.js').then(function (m) { excelLib = Promise.resolve(m); return m; });
-    Promise.resolve(loading).then(function (lib) {
+  function loadExcel() {
+    if (!excelLib) excelLib = import('./excel.bundle.js').catch(function (e) { excelLib = null; throw e; });
+    return excelLib;
+  }
+
+  function backupData() {
+    return Object.assign({}, data, { exportedAt: new Date().toISOString(), owner: null, dirty: false });
+  }
+
+  function makeExcel() {
+    return loadExcel().then(function (lib) {
       var cur = data.settings.currency || '';
       var amountCol = function (key) { return t(key) + (cur ? ' (' + cur + ')' : ''); };
       var rows = data.customers.map(function (c) {
@@ -966,12 +989,27 @@
           e.amount / 100, e.note || '', running[e.customerId] / 100]);
       });
 
-      var blob = lib.makeWorkbook([
+      return lib.makeWorkbook([
         { name: t('sheetCustomers'), rows: customers, widths: [24, 16, 20, 18, 16, 16, 14] },
         { name: t('sheetHistory'), rows: history, widths: [12, 24, 14, 14, 30, 16] }
-      ]);
-      var shop = (data.settings.shopName || 'Deyn-Book').replace(/[^\w\u00C0-\u024F -]+/g, '').trim().replace(/\s+/g, '-');
-      return shareOrDownload(blob, shop + '_' + today() + '.xlsx', t('excelTitle'));
+      ], backupData());
+    });
+  }
+
+  function excelName() {
+    var shop = (data.settings.shopName || 'Deyn-Book').replace(/[^\w\u00C0-\u024F -]+/g, '').trim().replace(/\s+/g, '-');
+    return shop + '_' + fileStamp() + '.xlsx';
+  }
+
+  // Reports button and Back up button make the same file.
+  function exportExcel() {
+    makeExcel().then(function (blob) {
+      return shareOrDownload(blob, excelName(), t('excelTitle'));
+    }).then(function (done) {
+      if (!done) return;
+      data.lastBackup = new Date().toISOString();
+      save();
+      render();
     }).catch(function (e) {
       console.error(e);
       alert(t('excelFailed'));
