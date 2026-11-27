@@ -7,6 +7,7 @@ A simple phone app for a small shop to replace the paper debt book.
 - See each customer's balance and the total that everyone owes.
 - Send a reminder by WhatsApp or SMS with one tap.
 - **Back up** to WhatsApp, Google Drive or email, and **restore** on a new phone.
+- Languages: **English, Somali (Soomaali) and Swahili (Kiswahili)**; translations are in `i18n.js`.
 - Works **without internet** once it has been opened, and can be installed on the home screen.
 
 ## Keeping records safe

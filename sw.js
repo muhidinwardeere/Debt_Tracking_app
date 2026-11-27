@@ -1,6 +1,6 @@
 // Offline support: the app keeps working with no internet.
-var CACHE = 'debtbook-v1';
-var FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.json', 'icon.svg', 'icon-192.png', 'icon-512.png'];
+var CACHE = 'debtbook-v2';
+var FILES = ['./', 'index.html', 'style.css', 'app.js', 'i18n.js', 'manifest.json', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); }));

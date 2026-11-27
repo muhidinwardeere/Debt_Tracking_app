@@ -1,18 +1,25 @@
 /* Debt Book - a simple shop debt record that replaces the paper book.
  * All data is kept on the phone (localStorage). Use "Back up" regularly
  * to save a copy (WhatsApp to yourself, Google Drive, email...).
+ * Text shown to the user lives in i18n.js.
  */
 (function () {
   'use strict';
 
   var STORAGE_KEY = 'debtbook.v1';
   var BACKUP_REMIND_DAYS = 3;
+  var I18N = window.I18N;
 
   // ---------- Data ----------
+  function detectLang() {
+    var nav = (navigator.language || 'en').slice(0, 2).toLowerCase();
+    return I18N[nav] ? nav : 'en';
+  }
+
   function emptyData() {
     return {
       version: 1,
-      settings: { shopName: '', currency: 'KSh', ownerPhone: '' },
+      settings: { shopName: '', currency: 'KSh', ownerPhone: '', lang: '' },
       customers: [],
       entries: [],
       lastBackup: null
@@ -46,7 +53,7 @@
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
-      alert('Could not save! Phone storage may be full. Please make a backup now.');
+      alert(t('saveFail'));
     }
     updateBackupBanner();
   }
@@ -56,6 +63,35 @@
     navigator.storage.persist().catch(function () {});
   }
 
+  // ---------- Language ----------
+  function lang() {
+    var l = data.settings.lang;
+    return I18N[l] ? l : detectLang();
+  }
+
+  function t(key, vars) {
+    var s = (I18N[lang()] && I18N[lang()][key]) || I18N.en[key] || key;
+    if (vars) {
+      s = s.replace(/\{(\w+)\}/g, function (m, k) { return vars[k] != null ? vars[k] : m; });
+    }
+    return s;
+  }
+
+  function applyStaticText() {
+    document.documentElement.lang = lang();
+    document.getElementById('backBtn').setAttribute('aria-label', t('back'));
+    document.getElementById('settingsBtn').setAttribute('aria-label', t('settings'));
+    document.getElementById('backupNowBtn').textContent = t('backupNow');
+  }
+
+  function setLang(code) {
+    data.settings.lang = code;
+    save();
+    applyStaticText();
+    render();
+  }
+
+  // ---------- Helpers ----------
   function uid() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
@@ -70,7 +106,7 @@
   function money(cents) {
     var neg = cents < 0;
     var v = Math.abs(cents) / 100;
-    var s = v.toLocaleString(undefined, {
+    var s = v.toLocaleString('en-KE', {
       minimumFractionDigits: v % 1 ? 2 : 0,
       maximumFractionDigits: 2
     });
@@ -109,14 +145,21 @@
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   }
 
+  // e.g. "27 Nov 2026". Month names come from i18n.js because phones
+  // often have no Somali/Swahili date names built in.
   function niceDate(iso) {
     if (!iso) return '';
     var p = iso.split('-');
-    var d = new Date(+p[0], +p[1] - 1, +p[2]);
-    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+    var months = t('months').split(',');
+    return (+p[2]) + ' ' + (months[+p[1] - 1] || p[1]) + ' ' + p[0];
   }
 
-  // ---------- Helpers ----------
+  function niceDateTime(isoTime) {
+    var d = new Date(isoTime);
+    var day = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    return niceDate(day) + ', ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -129,15 +172,34 @@
 
   var toastTimer;
   function toast(msg) {
-    var t = document.getElementById('toast');
-    t.textContent = msg;
-    t.classList.add('show');
+    var el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2200);
+    toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
   }
 
   function cleanPhone(p) {
     return String(p || '').replace(/[^\d+]/g, '');
+  }
+
+  // Phone number in international form for WhatsApp (Kenya: 07.. -> 2547..).
+  function waNumber(p) {
+    var n = cleanPhone(p).replace(/^\+/, '');
+    if (/^0[17]\d{8}$/.test(n)) n = '254' + n.slice(1);
+    return n;
+  }
+
+  function langButtons() {
+    return '<div class="lang-pick">' + I18N.LANGS.map(function (l) {
+      return '<button type="button" class="tab" data-lang="' + l.code + '" aria-pressed="' + (lang() === l.code) + '">' + esc(l.label) + '</button>';
+    }).join('') + '</div>';
+  }
+
+  function wireLangButtons(root) {
+    root.querySelectorAll('[data-lang]').forEach(function (b) {
+      b.addEventListener('click', function () { setLang(b.dataset.lang); });
+    });
   }
 
   // ---------- Dialog ----------
@@ -158,17 +220,21 @@
     if (first) setTimeout(function () { first.focus(); }, 50);
   }
 
+  function dialogButtons(okClass) {
+    return '<div class="buttons"><button class="btn ghost" value="cancel" formnovalidate>' + esc(t('cancel')) + '</button>' +
+      '<button class="btn ' + (okClass || '') + '" value="ok">' + esc(t('save')) + '</button></div>';
+  }
+
   function customerForm(c) {
     c = c || {};
-    return '<h2>' + (c.id ? 'Edit customer' : 'New customer') + '</h2>' +
-      '<label for="f-name">Name</label>' +
+    return '<h2>' + esc(c.id ? t('editCustomer') : t('newCustomer')) + '</h2>' +
+      '<label for="f-name">' + esc(t('name')) + '</label>' +
       '<input id="f-name" name="name" required autocomplete="off" value="' + esc(c.name) + '">' +
-      '<label for="f-phone">Phone (optional)</label>' +
-      '<input id="f-phone" name="phone" type="tel" inputmode="tel" autocomplete="off" value="' + esc(c.phone) + '">' +
-      '<label for="f-place">Address / note (optional)</label>' +
+      '<label for="f-phone">' + esc(t('phoneOpt')) + '</label>' +
+      '<input id="f-phone" name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="' + esc(t('phonePh')) + '" value="' + esc(c.phone) + '">' +
+      '<label for="f-place">' + esc(t('placeOpt')) + '</label>' +
       '<input id="f-place" name="place" autocomplete="off" value="' + esc(c.place) + '">' +
-      '<div class="buttons"><button class="btn ghost" value="cancel" formnovalidate>Cancel</button>' +
-      '<button class="btn" value="ok">Save</button></div>';
+      dialogButtons();
   }
 
   function addCustomer() {
@@ -179,7 +245,7 @@
       data.customers.push(c);
       save();
       location.hash = '#/c/' + c.id;
-      toast('Customer added');
+      toast(t('customerAdded'));
     });
   }
 
@@ -192,26 +258,25 @@
       c.place = String(fd.get('place')).trim();
       save();
       render();
-      toast('Saved');
+      toast(t('saved'));
     });
   }
 
   function addEntry(c, type) {
     var isDebt = type === 'debt';
     openDialog(
-      '<h2>' + (isDebt ? 'Took on debt' : 'Paid back') + '</h2>' +
+      '<h2>' + esc(isDebt ? t('tookDebt') : t('paidBack')) + '</h2>' +
       '<p style="margin:0;color:var(--muted)">' + esc(c.name) + '</p>' +
-      '<label for="f-amount">Amount (' + esc(data.settings.currency) + ')</label>' +
+      '<label for="f-amount">' + esc(t('amount', { cur: data.settings.currency })) + '</label>' +
       '<input id="f-amount" name="amount" required inputmode="decimal" autocomplete="off" placeholder="0">' +
-      '<label for="f-note">' + (isDebt ? 'What did they take? (optional)' : 'Note (optional)') + '</label>' +
-      '<input id="f-note" name="note" autocomplete="off" placeholder="' + (isDebt ? 'e.g. rice 5kg, sugar, oil' : 'e.g. cash, mobile money') + '">' +
-      '<label for="f-date">Date</label>' +
+      '<label for="f-note">' + esc(isDebt ? t('whatTaken') : t('noteOpt')) + '</label>' +
+      '<input id="f-note" name="note" autocomplete="off" placeholder="' + esc(isDebt ? t('debtPh') : t('payPh')) + '">' +
+      '<label for="f-date">' + esc(t('date')) + '</label>' +
       '<input id="f-date" name="date" type="date" required value="' + today() + '">' +
-      '<div class="buttons"><button class="btn ghost" value="cancel" formnovalidate>Cancel</button>' +
-      '<button class="btn ' + (isDebt ? 'owe' : 'paid') + '" value="ok">Save</button></div>',
+      dialogButtons(isDebt ? 'owe' : 'paid'),
       function (fd) {
         var cents = toCents(fd.get('amount'));
-        if (!cents) { alert('Please enter an amount bigger than 0.'); return false; }
+        if (!cents) { alert(t('amountErr')); return false; }
         data.entries.push({
           id: uid(), customerId: c.id, type: type, amount: cents,
           note: String(fd.get('note')).trim(), date: String(fd.get('date')) || today(),
@@ -219,7 +284,7 @@
         });
         save();
         render();
-        toast(isDebt ? 'Debt recorded' : 'Payment recorded');
+        toast(isDebt ? t('debtRecorded') : t('paymentRecorded'));
       }
     );
   }
@@ -240,7 +305,8 @@
   }
 
   function renderHome() {
-    titleEl.textContent = data.settings.shopName || 'Debt Book';
+    titleEl.textContent = data.settings.shopName || t('appName');
+    document.title = t('appName');
     backBtn.hidden = true;
 
     var rows = data.customers.map(function (c) {
@@ -260,36 +326,45 @@
       return a.c.name.localeCompare(b.c.name);
     });
 
-    var html =
+    var html = '';
+
+    if (!data.customers.length) {
+      // First use: let the person pick their language straight away.
+      html += '<section class="card"><div class="section-title" style="margin-top:0">' +
+        esc(t('chooseLanguage')) + '</div>' + langButtons() + '</section>';
+    }
+
+    html +=
       '<section class="summary">' +
-        '<div class="label">Total customers owe you</div>' +
+        '<div class="label">' + esc(t('totalOwe')) + '</div>' +
         '<div class="big">' + money(total) + '</div>' +
-        '<div class="sub">' + owingCount + ' of ' + data.customers.length + ' customers owe money</div>' +
+        '<div class="sub">' + esc(t('owingCount', { n: owingCount, total: data.customers.length })) + '</div>' +
       '</section>' +
-      '<input class="search" id="search" type="search" placeholder="Search name or phone…" value="' + esc(query) + '">' +
+      '<input class="search" id="search" type="search" placeholder="' + esc(t('searchPh')) + '" value="' + esc(query) + '">' +
       '<div class="tabs">' +
-        '<button class="tab" data-filter="owing" aria-pressed="' + (filter === 'owing') + '">Owing</button>' +
-        '<button class="tab" data-filter="all" aria-pressed="' + (filter === 'all') + '">All customers</button>' +
+        '<button class="tab" data-filter="owing" aria-pressed="' + (filter === 'owing') + '">' + esc(t('tabOwing')) + '</button>' +
+        '<button class="tab" data-filter="all" aria-pressed="' + (filter === 'all') + '">' + esc(t('tabAll')) + '</button>' +
       '</div>';
 
     if (!data.customers.length) {
-      html += '<div class="empty">No customers yet.<br>Tap <b>+ Customer</b> to add the first one from your book.</div>';
+      html += '<div class="empty">' + t('emptyNone') + '</div>';
     } else if (!shown.length) {
-      html += '<div class="empty">' + (q ? 'No customer matches “' + esc(query) + '”.' : 'Nobody owes money right now. 🎉') + '</div>';
+      html += '<div class="empty">' + (q ? esc(t('noMatch', { q: query })) : esc(t('nobodyOwes'))) + '</div>';
     } else {
       html += '<ul class="list">' + shown.map(function (r) {
         return '<li><button class="row" data-id="' + esc(r.c.id) + '">' +
           '<span class="avatar">' + esc(initials(r.c.name)) + '</span>' +
           '<span class="main"><div class="name">' + esc(r.c.name) + '</div>' +
-          '<div class="meta">' + (r.last ? 'Last: ' + niceDate(r.last) : 'No records yet') + '</div></span>' +
-          '<span class="amount ' + (r.bal > 0 ? 'owe' : 'clear') + '">' + (r.bal > 0 ? money(r.bal) : 'Clear') + '</span>' +
+          '<div class="meta">' + esc(r.last ? t('lastActivity', { date: niceDate(r.last) }) : t('noRecords')) + '</div></span>' +
+          '<span class="amount ' + (r.bal > 0 ? 'owe' : 'clear') + '">' + esc(r.bal > 0 ? money(r.bal) : t('clear')) + '</span>' +
           '</button></li>';
       }).join('') + '</ul>';
     }
 
-    html += '<button class="fab" id="addCustomerBtn">+ Customer</button>';
+    html += '<button class="fab" id="addCustomerBtn">' + esc(t('addCustomer')) + '</button>';
     app.innerHTML = html;
 
+    wireLangButtons(app);
     var search = document.getElementById('search');
     search.addEventListener('input', function () {
       query = search.value;
@@ -299,7 +374,7 @@
       s2.focus();
       try { s2.setSelectionRange(pos, pos); } catch (e) {}
     });
-    app.querySelectorAll('.tab').forEach(function (b) {
+    app.querySelectorAll('[data-filter]').forEach(function (b) {
       b.addEventListener('click', function () { filter = b.dataset.filter; renderHome(); });
     });
     app.querySelectorAll('.row').forEach(function (b) {
@@ -309,9 +384,8 @@
   }
 
   function reminderText(c, bal) {
-    var shop = data.settings.shopName ? ' from ' + data.settings.shopName : '';
-    return 'Hello ' + c.name + ', this is a friendly reminder' + shop +
-      '. Your balance is ' + money(bal) + '. Thank you!';
+    var shop = data.settings.shopName ? t('reminderShop', { shop: data.settings.shopName }) : '';
+    return t('reminder', { name: c.name, shop: shop, amt: money(bal) });
   }
 
   function renderCustomer(id) {
@@ -323,41 +397,41 @@
     var bal = balanceOf(c.id);
     var list = entriesOf(c.id);
     var phone = cleanPhone(c.phone);
-    var waPhone = phone.replace(/^\+/, '');
+    var msg = reminderText(c, bal);
 
     var html =
       '<section class="summary">' +
-        '<div class="label">' + (bal > 0 ? 'Owes you' : bal < 0 ? 'You owe them (overpaid)' : 'Balance') + '</div>' +
-        '<div class="big" style="color:' + (bal > 0 ? 'var(--owe)' : 'var(--paid)') + '">' + (bal === 0 ? 'Clear' : money(Math.abs(bal))) + '</div>' +
+        '<div class="label">' + esc(bal > 0 ? t('owesYou') : bal < 0 ? t('overpaid') : t('balance')) + '</div>' +
+        '<div class="big" style="color:' + (bal > 0 ? 'var(--owe)' : 'var(--paid)') + '">' + esc(bal === 0 ? t('clear') : money(Math.abs(bal))) + '</div>' +
         '<div class="sub">' + esc([c.phone, c.place].filter(Boolean).join(' · ')) + '</div>' +
       '</section>' +
       '<div class="actions">' +
-        '<button class="btn owe" id="debtBtn">+ Took debt</button>' +
-        '<button class="btn paid" id="payBtn">− Paid back</button>' +
+        '<button class="btn owe" id="debtBtn">+ ' + esc(t('tookDebt')) + '</button>' +
+        '<button class="btn paid" id="payBtn">− ' + esc(t('paidBack')) + '</button>' +
       '</div>' +
       '<div class="links">' +
-        (phone ? '<a class="btn ghost small" href="tel:' + esc(phone) + '">📞 Call</a>' : '') +
-        (phone && bal > 0 ? '<a class="btn ghost small" target="_blank" rel="noopener" href="https://wa.me/' + esc(waPhone) + '?text=' + encodeURIComponent(reminderText(c, bal)) + '">💬 WhatsApp reminder</a>' : '') +
-        (phone && bal > 0 ? '<a class="btn ghost small" href="sms:' + esc(phone) + '?body=' + encodeURIComponent(reminderText(c, bal)) + '">✉️ SMS reminder</a>' : '') +
-        '<button class="btn ghost small" id="editBtn">✏️ Edit</button>' +
+        (phone ? '<a class="btn ghost small" href="tel:' + esc(phone) + '">📞 ' + esc(t('call')) + '</a>' : '') +
+        (phone && bal > 0 ? '<a class="btn ghost small" target="_blank" rel="noopener" href="https://wa.me/' + esc(waNumber(phone)) + '?text=' + encodeURIComponent(msg) + '">💬 ' + esc(t('waReminder')) + '</a>' : '') +
+        (phone && bal > 0 ? '<a class="btn ghost small" href="sms:' + esc(phone) + '?body=' + encodeURIComponent(msg) + '">✉️ ' + esc(t('smsReminder')) + '</a>' : '') +
+        '<button class="btn ghost small" id="editBtn">✏️ ' + esc(t('edit')) + '</button>' +
       '</div>' +
-      '<div class="section-title">History</div>';
+      '<div class="section-title">' + esc(t('history')) + '</div>';
 
     if (!list.length) {
-      html += '<div class="empty">No records yet for this customer.</div>';
+      html += '<div class="empty">' + esc(t('noRecordsCustomer')) + '</div>';
     } else {
       html += '<ul class="list">' + list.map(function (e) {
         return '<li class="entry ' + e.type + '">' +
-          '<span class="tag">' + (e.type === 'debt' ? 'DEBT' : 'PAID') + '</span>' +
+          '<span class="tag">' + esc(e.type === 'debt' ? t('tagDebt') : t('tagPaid')) + '</span>' +
           '<div class="main"><div class="amount">' + money(e.amount) + '</div>' +
           (e.note ? '<div class="note">' + esc(e.note) + '</div>' : '') +
-          '<div class="meta">' + niceDate(e.date) + '</div></div>' +
-          '<button class="del" data-id="' + esc(e.id) + '" aria-label="Delete record">🗑</button>' +
+          '<div class="meta">' + esc(niceDate(e.date)) + '</div></div>' +
+          '<button class="del" data-id="' + esc(e.id) + '" aria-label="' + esc(t('deleteRecord')) + '">🗑</button>' +
           '</li>';
       }).join('') + '</ul>';
     }
 
-    html += '<div style="margin-top:24px"><button class="btn danger block" id="delCustomerBtn">Delete this customer</button></div>';
+    html += '<div style="margin-top:24px"><button class="btn danger block" id="delCustomerBtn">' + esc(t('deleteCustomer')) + '</button></div>';
     app.innerHTML = html;
 
     document.getElementById('debtBtn').addEventListener('click', function () { addEntry(c, 'debt'); });
@@ -367,58 +441,62 @@
       b.addEventListener('click', function () {
         var e = data.entries.find(function (x) { return x.id === b.dataset.id; });
         if (!e) return;
-        if (!confirm('Delete this record of ' + money(e.amount) + '?')) return;
+        if (!confirm(t('confirmDelRecord', { amt: money(e.amount) }))) return;
         data.entries = data.entries.filter(function (x) { return x.id !== e.id; });
-        save(); render(); toast('Record deleted');
+        save(); render(); toast(t('recordDeleted'));
       });
     });
     document.getElementById('delCustomerBtn').addEventListener('click', function () {
-      var msg = 'Delete ' + c.name + ' and all their records?' + (bal > 0 ? '\n\nThey still owe ' + money(bal) + '!' : '');
-      if (!confirm(msg)) return;
+      var q = t('confirmDelCustomer', { name: c.name }) + (bal > 0 ? '\n\n' + t('stillOwes', { amt: money(bal) }) : '');
+      if (!confirm(q)) return;
       data.customers = data.customers.filter(function (x) { return x.id !== c.id; });
       data.entries = data.entries.filter(function (x) { return x.customerId !== c.id; });
       save();
       location.hash = '#/';
-      toast('Customer deleted');
+      toast(t('customerDeleted'));
     });
   }
 
   function renderSettings() {
-    titleEl.textContent = 'Settings & Backup';
+    titleEl.textContent = t('settingsTitle');
     backBtn.hidden = false;
     var s = data.settings;
-    var last = data.lastBackup ? new Date(data.lastBackup).toLocaleString() : 'Never';
+    var last = data.lastBackup ? niceDateTime(data.lastBackup) : t('never');
 
     app.innerHTML =
       '<section class="card">' +
-        '<div class="section-title" style="margin-top:0">Backup — keep your records safe</div>' +
-        '<p>Your records are saved on this phone. If the phone is lost or broken, you need a backup. ' +
-        'Tap <b>Back up now</b> and send the file to yourself on WhatsApp, Google Drive or email.</p>' +
-        '<p>Last backup: <b>' + esc(last) + '</b></p>' +
-        '<button class="btn block" id="backupBtn">⬆️ Back up now</button>' +
-        '<button class="btn ghost block" id="restoreBtn">⬇️ Restore from a backup file</button>' +
+        '<div class="section-title" style="margin-top:0">' + esc(t('language')) + '</div>' +
+        langButtons() +
+      '</section>' +
+      '<section class="card">' +
+        '<div class="section-title" style="margin-top:0">' + esc(t('backupTitle')) + '</div>' +
+        '<p>' + t('backupExplain') + '</p>' +
+        '<p>' + esc(t('lastBackup')) + ' <b>' + esc(last) + '</b></p>' +
+        '<button class="btn block" id="backupBtn">⬆️ ' + esc(t('backupNow')) + '</button>' +
+        '<button class="btn ghost block" id="restoreBtn">⬇️ ' + esc(t('restore')) + '</button>' +
         '<input type="file" id="restoreFile" accept=".json,application/json" hidden>' +
       '</section>' +
       '<form class="card" id="settingsForm">' +
-        '<div class="section-title" style="margin-top:0">Shop</div>' +
-        '<label for="s-name">Shop name</label>' +
-        '<input id="s-name" name="shopName" value="' + esc(s.shopName) + '" placeholder="e.g. Hooyo Shop">' +
-        '<label for="s-cur">Money symbol</label>' +
+        '<div class="section-title" style="margin-top:0">' + esc(t('shop')) + '</div>' +
+        '<label for="s-name">' + esc(t('shopName')) + '</label>' +
+        '<input id="s-name" name="shopName" value="' + esc(s.shopName) + '" placeholder="' + esc(t('shopNamePh')) + '">' +
+        '<label for="s-cur">' + esc(t('currency')) + '</label>' +
         '<input id="s-cur" name="currency" value="' + esc(s.currency) + '" placeholder="KSh">' +
-        '<div style="margin-top:14px"><button class="btn block">Save settings</button></div>' +
+        '<div style="margin-top:14px"><button class="btn block">' + esc(t('saveSettings')) + '</button></div>' +
       '</form>' +
       '<section class="card">' +
-        '<div class="section-title" style="margin-top:0">Reports</div>' +
-        '<p>Download a spreadsheet (CSV) of everyone who owes money. Opens in Excel or Google Sheets.</p>' +
-        '<button class="btn ghost block" id="csvBtn">📄 Download list of debts</button>' +
+        '<div class="section-title" style="margin-top:0">' + esc(t('reports')) + '</div>' +
+        '<p>' + esc(t('reportsExplain')) + '</p>' +
+        '<button class="btn ghost block" id="csvBtn">📄 ' + esc(t('downloadCsv')) + '</button>' +
       '</section>';
 
+    wireLangButtons(app);
     document.getElementById('settingsForm').addEventListener('submit', function (ev) {
       ev.preventDefault();
       var fd = new FormData(ev.target);
       s.shopName = String(fd.get('shopName')).trim();
       s.currency = String(fd.get('currency')).trim();
-      save(); toast('Settings saved'); render();
+      save(); toast(t('settingsSaved')); render();
     });
     document.getElementById('backupBtn').addEventListener('click', backup);
     var fileInput = document.getElementById('restoreFile');
@@ -462,11 +540,11 @@
   function backup() {
     var copy = Object.assign({}, data, { exportedAt: new Date().toISOString() });
     var blob = new Blob([JSON.stringify(copy, null, 2)], { type: 'application/json' });
-    shareOrDownload(blob, 'debt-book-backup_' + fileStamp() + '.json', 'Debt Book backup').then(function (done) {
+    shareOrDownload(blob, 'debt-book-backup_' + fileStamp() + '.json', t('appName')).then(function (done) {
       if (!done) return;
       data.lastBackup = new Date().toISOString();
       save();
-      toast('Backup made ✔');
+      toast(t('backupMade'));
       render();
     });
   }
@@ -477,15 +555,14 @@
       var incoming;
       try { incoming = normalize(JSON.parse(reader.result)); } catch (e) { incoming = null; }
       if (!incoming || (!incoming.customers.length && !incoming.entries.length)) {
-        alert('This file is not a Debt Book backup, or it is empty.');
+        alert(t('notBackup'));
         return;
       }
-      var msg = 'Restore this backup?\n\n' + incoming.customers.length + ' customers, ' + incoming.entries.length +
-        ' records.\n\nThis REPLACES what is on this phone now.';
-      if (!confirm(msg)) return;
+      if (!confirm(t('confirmRestore', { c: incoming.customers.length, e: incoming.entries.length }))) return;
       data = incoming;
       save();
-      toast('Backup restored ✔');
+      applyStaticText();
+      toast(t('restored'));
       location.hash = '#/';
       render();
     };
@@ -494,7 +571,7 @@
 
   function exportCsv() {
     function cell(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
-    var lines = [['Customer', 'Phone', 'Balance owed', 'Last activity'].join(',')];
+    var lines = [t('csvHeader')];
     data.customers
       .map(function (c) { return { c: c, bal: balanceOf(c.id) }; })
       .filter(function (r) { return r.bal > 0; })
@@ -502,19 +579,23 @@
       .forEach(function (r) {
         lines.push([cell(r.c.name), cell(r.c.phone), (r.bal / 100).toFixed(2), cell(lastActivity(r.c.id))].join(','));
       });
-    var blob = new Blob([lines.join('\n')], { type: 'text/csv' });
-    shareOrDownload(blob, 'debts_' + today() + '.csv', 'Debt list');
+    // BOM so Excel shows non-English letters correctly.
+    var blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv' });
+    shareOrDownload(blob, 'debts_' + today() + '.csv', t('downloadCsv'));
   }
 
   // ---------- Backup reminder ----------
   var banner = document.getElementById('backupBanner');
   function updateBackupBanner() {
-    if (!data.entries.length) { banner.hidden = true; document.body.classList.remove('has-banner'); return; }
     var days = data.lastBackup ? (Date.now() - new Date(data.lastBackup).getTime()) / 864e5 : Infinity;
-    if (days < BACKUP_REMIND_DAYS) { banner.hidden = true; document.body.classList.remove('has-banner'); return; }
+    if (!data.entries.length || days < BACKUP_REMIND_DAYS) {
+      banner.hidden = true;
+      document.body.classList.remove('has-banner');
+      return;
+    }
     document.getElementById('backupBannerText').textContent = data.lastBackup
-      ? 'No backup for ' + Math.floor(days) + ' days.'
-      : 'You have not made a backup yet.';
+      ? t('noBackupDays', { n: Math.floor(days) })
+      : t('noBackupYet');
     banner.hidden = false;
     document.body.classList.add('has-banner');
   }
@@ -529,13 +610,14 @@
 
   // Keep tabs in sync if the app is open twice.
   window.addEventListener('storage', function (e) {
-    if (e.key === STORAGE_KEY) { data = load(); render(); updateBackupBanner(); }
+    if (e.key === STORAGE_KEY) { data = load(); applyStaticText(); render(); updateBackupBanner(); }
   });
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(function () {});
   }
 
+  applyStaticText();
   render();
   updateBackupBanner();
 })();
