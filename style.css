@@ -182,3 +182,5 @@ body.has-banner { padding-bottom: calc(170px + env(safe-area-inset-bottom)); }
 .lang-pick { display: flex; gap: 8px; flex-wrap: wrap; }
 .lang-pick .tab { flex: 1; min-width: 90px; }
 .banner[hidden] { display: none; }
+.cloud-card { border-color: var(--brand); }
+.cloud-card p { color: var(--text); }

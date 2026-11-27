@@ -1,6 +1,8 @@
 /* Deyn Book - a simple shop debt record that replaces the paper book.
- * All data is kept on the phone (localStorage). Use "Back up" regularly
- * to save a copy (WhatsApp to yourself, Google Drive, email...).
+ * Records are kept on the phone (localStorage). When the owner signs in
+ * with Google, cloud.bundle.js (built from cloud/cloud.src.js) also keeps
+ * them online in Firestore; this file talks to it through window.DeynCloud
+ * and receives updates through window.DeynApp.
  * Text shown to the user lives in i18n.js.
  */
 (function () {
@@ -24,7 +26,9 @@
       settings: { shopName: '', currency: 'KSh', ownerPhone: '', lang: '' },
       customers: [],
       entries: [],
-      lastBackup: null
+      lastBackup: null,
+      owner: null,   // uid of the signed-in account these records belong to
+      dirty: false   // changed while not signed in, so must be uploaded
     };
   }
 
@@ -46,6 +50,8 @@
     base.customers = Array.isArray(d.customers) ? d.customers : [];
     base.entries = Array.isArray(d.entries) ? d.entries : [];
     base.lastBackup = d.lastBackup || null;
+    base.owner = d.owner || null;
+    base.dirty = !!d.dirty;
     return base;
   }
 
@@ -58,6 +64,169 @@
       alert(t('saveFail'));
     }
     updateBackupBanner();
+  }
+
+  // ---------- Cloud ----------
+  var account = null;       // { uid, email, name } when signed in
+  var authKnown = false;    // false until the cloud code has said who is signed in
+  var cloudAvailable = false;
+  var signingIn = false;
+  var signingOut = false;
+  var cloudErrorShown = false;
+
+  // The cloud API, only while signed in.
+  function cloud() {
+    return account && window.DeynCloud && window.DeynCloud.isSignedIn() ? window.DeynCloud : null;
+  }
+
+  // Call after every change the user makes. Without the cloud, remember
+  // that this phone has changes to upload at the next sign-in.
+  function changed(fn) {
+    var c = cloud();
+    if (c) fn(c); else data.dirty = true;
+    save();
+  }
+
+  function normC(c) {
+    return { id: c.id, name: c.name || '', phone: c.phone || '', place: c.place || '', createdAt: c.createdAt || '' };
+  }
+  function normE(e) {
+    return { id: e.id, customerId: e.customerId, type: e.type === 'payment' ? 'payment' : 'debt', amount: +e.amount || 0,
+      note: e.note || '', date: e.date || '', createdAt: e.createdAt || '' };
+  }
+  function byId(a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; }
+  function sameList(a, b) {
+    return JSON.stringify(a.slice().sort(byId)) === JSON.stringify(b.slice().sort(byId));
+  }
+
+  // Re-draw without throwing away what the person is typing.
+  function safeRender() {
+    var active = document.activeElement;
+    if (active && active.closest && active.closest('#settingsForm')) return;
+    if (dialog.open) { render(); return; }
+    var searching = active && active.id === 'search';
+    var pos = searching ? active.selectionStart : 0;
+    render();
+    if (searching) {
+      var s2 = document.getElementById('search');
+      if (s2) { s2.focus(); try { s2.setSelectionRange(pos, pos); } catch (e) {} }
+    }
+  }
+
+  window.DeynApp = {
+    cloudReady: function () {
+      cloudAvailable = true;
+      safeRender();
+    },
+
+    // Called once a user is signed in, before records are downloaded.
+    // Returns this phone's records if they still need to go online.
+    takeLocalForUpload: function (uid) {
+      if (data.owner && data.owner !== uid) {
+        // Records of a different account: never mix them in.
+        var keepLang = data.settings.lang;
+        data = emptyData();
+        data.settings.lang = keepLang;
+      }
+      var upload = null;
+      if (data.dirty && (data.customers.length || data.entries.length || data.settings.shopName)) {
+        upload = { customers: data.customers.map(normC), entries: data.entries.map(normE), settings: data.settings };
+      }
+      data.owner = uid;
+      data.dirty = false;
+      save();
+      return upload;
+    },
+
+    onAuth: function (user) {
+      authKnown = true;
+      if (user) {
+        account = user;
+        if (signingIn) toast(t('signedIn'));
+      } else {
+        if (signingOut) {
+          // Signed out on purpose (only after everything was uploaded):
+          // records are safe online, so remove them from this phone,
+          // which may be shared or given away.
+          var keepLang = data.settings.lang;
+          data = emptyData();
+          data.settings.lang = keepLang;
+          save();
+          toast(t('signedOut'));
+        }
+        // If the login simply expired, keep the records on the phone;
+        // they belong to data.owner and are merged back at the next sign-in.
+        account = null;
+      }
+      signingIn = false;
+      signingOut = false;
+      updateBackupBanner();
+      safeRender();
+    },
+
+    applyRemote: function (part) {
+      var changedAny = false;
+      if (part.customers) {
+        var cs = part.customers.map(normC);
+        if (!sameList(cs, data.customers.map(normC))) { data.customers = cs; changedAny = true; }
+      }
+      if (part.entries) {
+        var es = part.entries.map(normE);
+        if (!sameList(es, data.entries.map(normE))) { data.entries = es; changedAny = true; }
+      }
+      if (part.settings) {
+        ['shopName', 'currency'].forEach(function (k) {
+          if (typeof part.settings[k] === 'string' && part.settings[k] !== data.settings[k]) {
+            data.settings[k] = part.settings[k]; changedAny = true;
+          }
+        });
+      }
+      if (!changedAny) return;
+      save();
+      safeRender();
+    },
+
+    cloudError: function (e) {
+      if (cloudErrorShown) return;
+      cloudErrorShown = true;
+      toast(t('cloudProblem') + (e && e.code ? ' (' + e.code + ')' : ''));
+    },
+
+    toastKey: function (key) { toast(t(key)); }
+  };
+
+  function signIn() {
+    if (!window.DeynCloud) return;
+    signingIn = true;
+    window.DeynCloud.signIn().catch(function (e) {
+      signingIn = false;
+      console.error(e);
+      alert(t('signInFailed') + (e && e.code ? '\n\n(' + e.code + ')' : ''));
+    });
+  }
+
+  function signOut() {
+    if (!cloud() || !confirm(t('confirmSignOut'))) return;
+    signingOut = true;
+    window.DeynCloud.signOut().then(function (ok) {
+      if (!ok) { signingOut = false; alert(t('signOutOffline')); }
+    }).catch(function (e) {
+      signingOut = false;
+      console.error(e);
+      alert(t('signOutOffline'));
+    });
+  }
+
+  function signInCardHtml() {
+    return '<section class="card cloud-card">' +
+      '<p>☁️ ' + esc(t('signInExplain')) + '</p>' +
+      '<button class="btn block google-btn" data-signin>' + esc(t('signIn')) + '</button>' +
+      '</section>';
+  }
+
+  function wireCloudButtons(root) {
+    root.querySelectorAll('[data-signin]').forEach(function (b) { b.addEventListener('click', signIn); });
+    root.querySelectorAll('[data-signout]').forEach(function (b) { b.addEventListener('click', signOut); });
   }
 
   // Ask the browser not to clear our data when storage is low.
@@ -245,7 +414,7 @@
       if (!name) return false;
       var c = { id: uid(), name: name, phone: String(fd.get('phone')).trim(), place: String(fd.get('place')).trim(), createdAt: new Date().toISOString() };
       data.customers.push(c);
-      save();
+      changed(function (cl) { cl.putCustomer(normC(c)); });
       location.hash = '#/c/' + c.id;
       toast(t('customerAdded'));
     });
@@ -258,7 +427,7 @@
       c.name = name;
       c.phone = String(fd.get('phone')).trim();
       c.place = String(fd.get('place')).trim();
-      save();
+      changed(function (cl) { cl.putCustomer(normC(c)); });
       render();
       toast(t('saved'));
     });
@@ -279,12 +448,13 @@
       function (fd) {
         var cents = toCents(fd.get('amount'));
         if (!cents) { alert(t('amountErr')); return false; }
-        data.entries.push({
+        var entry = {
           id: uid(), customerId: c.id, type: type, amount: cents,
           note: String(fd.get('note')).trim(), date: String(fd.get('date')) || today(),
           createdAt: new Date().toISOString()
-        });
-        save();
+        };
+        data.entries.push(entry);
+        changed(function (cl) { cl.putEntry(normE(entry)); });
         render();
         toast(isDebt ? t('debtRecorded') : t('paymentRecorded'));
       }
@@ -336,6 +506,8 @@
         esc(t('chooseLanguage')) + '</div>' + langButtons() + '</section>';
     }
 
+    if (cloudAvailable && authKnown && !account) html += signInCardHtml();
+
     html +=
       '<section class="summary">' +
         '<div class="label">' + esc(t('totalOwe')) + '</div>' +
@@ -367,6 +539,7 @@
     app.innerHTML = html;
 
     wireLangButtons(app);
+    wireCloudButtons(app);
     var search = document.getElementById('search');
     search.addEventListener('input', function () {
       query = search.value;
@@ -445,15 +618,17 @@
         if (!e) return;
         if (!confirm(t('confirmDelRecord', { amt: money(e.amount) }))) return;
         data.entries = data.entries.filter(function (x) { return x.id !== e.id; });
-        save(); render(); toast(t('recordDeleted'));
+        changed(function (cl) { cl.deleteEntry(e.id); });
+        render(); toast(t('recordDeleted'));
       });
     });
     document.getElementById('delCustomerBtn').addEventListener('click', function () {
       var q = t('confirmDelCustomer', { name: c.name }) + (bal > 0 ? '\n\n' + t('stillOwes', { amt: money(bal) }) : '');
       if (!confirm(q)) return;
+      var entryIds = data.entries.filter(function (x) { return x.customerId === c.id; }).map(function (x) { return x.id; });
       data.customers = data.customers.filter(function (x) { return x.id !== c.id; });
       data.entries = data.entries.filter(function (x) { return x.customerId !== c.id; });
-      save();
+      changed(function (cl) { cl.deleteCustomer(c.id, entryIds); });
       location.hash = '#/';
       toast(t('customerDeleted'));
     });
@@ -465,7 +640,19 @@
     var s = data.settings;
     var last = data.lastBackup ? niceDateTime(data.lastBackup) : t('never');
 
-    app.innerHTML =
+    var accountHtml = '';
+    if (cloudAvailable && authKnown) {
+      accountHtml = account
+        ? '<section class="card cloud-card">' +
+            '<div class="section-title" style="margin-top:0">' + esc(t('accountTitle')) + '</div>' +
+            '<p>✅ ' + esc(t('cloudOn')) + '</p>' +
+            '<p>' + esc(t('signedInAs', { email: account.email || account.name || '' })) + '</p>' +
+            '<button class="btn ghost block" data-signout>' + esc(t('signOut')) + '</button>' +
+          '</section>'
+        : signInCardHtml();
+    }
+
+    app.innerHTML = accountHtml +
       '<section class="card">' +
         '<div class="section-title" style="margin-top:0">' + esc(t('language')) + '</div>' +
         langButtons() +
@@ -493,12 +680,14 @@
       '</section>';
 
     wireLangButtons(app);
+    wireCloudButtons(app);
     document.getElementById('settingsForm').addEventListener('submit', function (ev) {
       ev.preventDefault();
       var fd = new FormData(ev.target);
       s.shopName = String(fd.get('shopName')).trim();
       s.currency = String(fd.get('currency')).trim();
-      save(); toast(t('settingsSaved')); render();
+      changed(function (cl) { cl.putSettings(s); });
+      toast(t('settingsSaved')); render();
     });
     document.getElementById('backupBtn').addEventListener('click', backup);
     var fileInput = document.getElementById('restoreFile');
@@ -561,8 +750,10 @@
         return;
       }
       if (!confirm(t('confirmRestore', { c: incoming.customers.length, e: incoming.entries.length }))) return;
+      incoming.owner = data.owner;
+      incoming.settings.lang = data.settings.lang || incoming.settings.lang;
       data = incoming;
-      save();
+      changed(function (cl) { cl.replaceAll({ customers: data.customers.map(normC), entries: data.entries.map(normE), settings: data.settings }); });
       applyStaticText();
       toast(t('restored'));
       location.hash = '#/';
@@ -590,7 +781,7 @@
   var banner = document.getElementById('backupBanner');
   function updateBackupBanner() {
     var days = data.lastBackup ? (Date.now() - new Date(data.lastBackup).getTime()) / 864e5 : Infinity;
-    if (!data.entries.length || days < BACKUP_REMIND_DAYS) {
+    if (account || !data.entries.length || days < BACKUP_REMIND_DAYS) {
       banner.hidden = true;
       document.body.classList.remove('has-banner');
       return;

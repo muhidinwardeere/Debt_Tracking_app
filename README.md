@@ -10,6 +10,14 @@ A simple phone app for a small shop to replace the paper debt book.
 - Languages: **Somali (Soomaali)** and **English**; translations are in `i18n.js`.
 - Works **without internet** once it has been opened, and can be installed on the home screen.
 
+## Saving online (sign in with Google)
+
+Tap **Ku gal Google / Sign in with Google**. Records are then saved online
+automatically (Firebase), and the app still works with no internet: changes
+upload when the signal comes back. On a new phone, sign in with the same
+Google account and everything comes back. Each account can only see its own
+records (see `firestore.rules`).
+
 ## Keeping records safe
 
 Records are saved on the phone itself. To protect them if the phone is lost:
@@ -28,7 +36,22 @@ Open the app link in Chrome (Android) or Safari (iPhone), then:
 
 ## Development
 
-Plain HTML/CSS/JavaScript with no build step. To run it locally:
+Plain HTML/CSS/JavaScript. The only built file is `cloud.bundle.js`
+(Firebase sign-in and saving), made from `cloud/cloud.src.js`:
+
+```bash
+npm install
+npm run build
+```
+
+Test against local Firebase emulators (needs Java), then open
+http://localhost:8000/?emulator=1:
+
+```bash
+npm run emulators
+```
+
+To run the app locally:
 
 ```bash
 python3 -m http.server 8000
