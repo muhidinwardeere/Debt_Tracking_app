@@ -10,7 +10,7 @@
 
   var STORAGE_KEY = 'debtbook.v1';
   var BACKUP_REMIND_DAYS = 3;
-  var APP_VERSION = '1.15';
+  var APP_VERSION = '1.16';
   var I18N = window.I18N;
 
   // ---------- Data ----------
@@ -816,6 +816,9 @@
 
   function memberInfo() {
     if (!cloudAvailable || !authKnown || membershipOff) return { active: true, unknown: true };
+    // iPhone home-screen apps cannot sign in with Google yet (Apple blocks
+    // the sign-in window there), so they keep working on the phone only.
+    if (!account && IS_IOS && IS_STANDALONE) return { active: true, unknown: true };
     if (!account) return { active: false, reason: 'signin' };
     if (isAdmin()) return { active: true, plan: 'lifetime' };
     if (!membershipKnown) return { active: true, unknown: true };
