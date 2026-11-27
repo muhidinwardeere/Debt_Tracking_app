@@ -1,5 +1,5 @@
 // Offline support: the app keeps working with no internet.
-var CACHE = 'deynbook-v3';
+var CACHE = 'deynbook-v4';
 var FILES = ['./', 'index.html', 'style.css', 'app.js', 'i18n.js', 'manifest.json', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', function (e) {
