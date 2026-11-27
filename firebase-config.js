@@ -12,4 +12,4 @@ window.DEYN_FIREBASE_CONFIG = {
 
 // Google account ids (User UID in Firebase -> Authentication -> Users) that
 // may open the admin page with usage counts. Also listed in firestore.rules.
-window.DEYN_ADMINS = [];
+window.DEYN_ADMINS = ['Qk7eYuDz7FMAQLfJKbdoPTKsE3t2'];

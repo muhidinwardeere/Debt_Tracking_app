@@ -16,7 +16,7 @@ service cloud.firestore {
     // counts (never customers or records). Same ids as DEYN_ADMINS in
     // firebase-config.js.
     function isAdmin() {
-      return request.auth != null && request.auth.uid in ['ADMIN_UID_HERE'];
+      return request.auth != null && request.auth.uid in ['Qk7eYuDz7FMAQLfJKbdoPTKsE3t2'];
     }
     function okId(id) {
       return id is string && id.matches('^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$');
