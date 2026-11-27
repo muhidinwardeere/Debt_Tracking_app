@@ -4,7 +4,8 @@
   --text: #17201d;
   --muted: #5d6b66;
   --line: #dfe5e2;
-  --brand: #0f766e;
+  --brand: #774d78;
+  --brand-soft: #f1e8f1;
   --brand-ink: #ffffff;
   --owe: #b42318;
   --owe-bg: #fdecea;
@@ -21,7 +22,9 @@
     --text: #e9efec;
     --muted: #9aa8a2;
     --line: #2a3430;
-    --brand: #14a394;
+    --brand: #8f5f90;
+    --brand-soft: #3a2a3b;
+    --brand-text: #d9b6da;
     --owe: #ff8a7a;
     --owe-bg: #3a1d1a;
     --paid: #5fd49a;
@@ -86,7 +89,7 @@ main { max-width: 640px; margin: 0 auto; padding: 16px; }
 .avatar {
   flex: none; width: 42px; height: 42px; border-radius: 50%;
   display: grid; place-items: center; font-weight: 700;
-  background: var(--paid-bg); color: var(--paid);
+  background: var(--brand-soft); color: var(--brand-text, var(--brand));
 }
 .row .main { flex: 1; min-width: 0; }
 .row .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

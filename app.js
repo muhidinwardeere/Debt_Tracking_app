@@ -1,4 +1,4 @@
-/* Debt Book - a simple shop debt record that replaces the paper book.
+/* Deyn Book - a simple shop debt record that replaces the paper book.
  * All data is kept on the phone (localStorage). Use "Back up" regularly
  * to save a copy (WhatsApp to yourself, Google Drive, email...).
  * Text shown to the user lives in i18n.js.
@@ -11,9 +11,11 @@
   var I18N = window.I18N;
 
   // ---------- Data ----------
+  // Somali by default (the app is made for Somali businesses); English if
+  // the phone is set to English and the person has not chosen yet.
   function detectLang() {
-    var nav = (navigator.language || 'en').slice(0, 2).toLowerCase();
-    return I18N[nav] ? nav : 'en';
+    var nav = (navigator.language || '').slice(0, 2).toLowerCase();
+    return nav === 'en' ? 'en' : 'so';
   }
 
   function emptyData() {
@@ -540,7 +542,7 @@
   function backup() {
     var copy = Object.assign({}, data, { exportedAt: new Date().toISOString() });
     var blob = new Blob([JSON.stringify(copy, null, 2)], { type: 'application/json' });
-    shareOrDownload(blob, 'debt-book-backup_' + fileStamp() + '.json', t('appName')).then(function (done) {
+    shareOrDownload(blob, 'deyn-book-backup_' + fileStamp() + '.json', t('appName')).then(function (done) {
       if (!done) return;
       data.lastBackup = new Date().toISOString();
       save();
