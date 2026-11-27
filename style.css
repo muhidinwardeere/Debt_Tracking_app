@@ -416,3 +416,12 @@ body.pin-open { overflow: hidden; }
 .btn-row { display: flex; gap: 10px; }
 .btn-row .btn { flex: 1; }
 .item.wrap .meta, .item.wrap .title { white-space: normal; }
+/* Credit: the shop owes the customer (paid too much) */
+:root { --credit: #1d5fbf; }
+@media (prefers-color-scheme: dark) { :root { --credit: #8db6f5; } }
+.credit-text { color: var(--credit); }
+.credit-text .amount svg.i { width: 18px; height: 18px; vertical-align: -3px; }
+.credit-label { color: var(--credit); font-weight: 600; font-size: 15px; margin-top: 4px; }
+.profile .balance.credit-text svg.i.xl { width: 40px; height: 40px; vertical-align: -6px; }
+.hero .credit-line { font-size: 14px; opacity: .9; margin-top: 6px; }
+.hero .credit-line svg.i { width: 18px; height: 18px; }

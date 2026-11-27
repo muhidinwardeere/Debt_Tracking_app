@@ -219,6 +219,11 @@ window.I18N = {
     agoMin: '{n} min ago',
     agoHour: '{n} h ago',
     agoDay: '{n} days ago',
+    creditShort: 'You owe him',
+    creditLong: 'Paid too much: the shop owes this customer',
+    creditTotal: 'Shop owes customers {amt}',
+    overpayWarn: 'This customer owes only {owes}, but you typed {paid}.\n\nOK = save {paid} (the shop will owe them {extra}).\nCancel = change it to {owes}.',
+    overpayNoDebt: 'This customer owes nothing. Save a payment of {paid}? The shop will owe them {paid}.',
     chooseLanguage: 'Choose your language',
     months: 'Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec'
   },
@@ -262,7 +267,7 @@ window.I18N = {
     debtRecorded: 'Deynta waa la qoray',
     paymentRecorded: 'Lacag-bixinta waa la qoray',
     owesYou: 'Deynta uu qabo',
-    overpaid: 'Wuu ka badiyay bixinta (adigaa ku leh)',
+    overpaid: 'Wuu ka badiyay bixinta (adiga ayaa lacag u haya)',
     balance: 'Haraaga',
     call: 'Wac',
     waReminder: 'Xasuusin WhatsApp',
@@ -434,6 +439,11 @@ window.I18N = {
     agoMin: '{n} daqiiqo kahor',
     agoHour: '{n} saac kahor',
     agoDay: '{n} maalmood kahor',
+    creditShort: 'Wuxuu kugu leeyahay',
+    creditLong: 'Wuu ka badiyay: macmiilkan ayaa dukaanka lacag ku leh',
+    creditTotal: 'Macaamiishu waxay dukaanka ku leeyihiin {amt}',
+    overpayWarn: 'Deynta macmiilkan waa {owes} oo keliya, laakiin waxaad qortay {paid}.\n\nOK = kaydi {paid} (macmiilka ayaa dukaanka ku lahaan doona {extra}).\nCancel = u beddel {owes}.',
+    overpayNoDebt: 'Macmiilkan deyn ma qabo. Ma kaydisaa lacag-bixin {paid}? Macmiilka ayaa dukaanka ku lahaan doona {paid}.',
     chooseLanguage: 'Dooro luqaddaada',
     months: 'Jan,Feb,Mar,Abr,May,Jun,Luu,Ogo,Seb,Okt,Nof,Dis'
   }

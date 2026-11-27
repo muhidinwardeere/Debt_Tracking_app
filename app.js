@@ -10,7 +10,7 @@
 
   var STORAGE_KEY = 'debtbook.v1';
   var BACKUP_REMIND_DAYS = 3;
-  var APP_VERSION = '1.10';
+  var APP_VERSION = '1.11';
   var I18N = window.I18N;
 
   // ---------- Data ----------
@@ -722,6 +722,23 @@
       function (fd) {
         var cents = toCents(fd.get('amount'));
         if (!cents) { shake(document.getElementById('amountShow')); return false; }
+        if (!isDebt) {
+          var owes = Math.max(balanceOf(c.id), 0);
+          if (cents > owes) {
+            var msg = owes
+              ? t('overpayWarn', { owes: money(owes), paid: money(cents), extra: money(cents - owes) })
+              : t('overpayNoDebt', { paid: money(cents) });
+            if (!confirm(msg)) {
+              // Keep the sheet open; if they owed something, offer that amount.
+              if (owes) {
+                var h = document.getElementById('f-amount');
+                h.value = String(owes / 100);
+                document.getElementById('amountNum').textContent = (owes / 100).toLocaleString('en-KE');
+              }
+              return false;
+            }
+          }
+        }
         var entry = {
           id: uid(), customerId: c.id, type: type, amount: cents,
           note: String(fd.get('note') || '').trim(), date: DATE_RE.test(String(fd.get('date'))) ? String(fd.get('date')) : today(),
@@ -1052,9 +1069,12 @@
   }
 
   function totals() {
-    var total = 0, owing = 0;
-    customerRows().forEach(function (r) { if (r.bal > 0) { total += r.bal; owing++; } });
-    return { total: total, owing: owing };
+    var total = 0, owing = 0, credit = 0;
+    customerRows().forEach(function (r) {
+      if (r.bal > 0) { total += r.bal; owing++; }
+      else if (r.bal < 0) credit -= r.bal;   // shop owes the customer
+    });
+    return { total: total, owing: owing, credit: credit };
   }
 
   // Each customer gets their own color, so people can be found by color and
@@ -1077,7 +1097,11 @@
       (r.c.phone ? '<div class="meta">' + icon('phone') + ' ' + esc(r.c.phone) + '</div>' : '') + '</span>' +
       (r.bal > 0
         ? '<span class="end"><div class="amount big num owe-text">' + money(r.bal) + '</div></span>'
-        : '<span class="end paid-text" aria-label="' + esc(t('clear')) + '">' + icon('checkBig', 'xl') + '</span>') +
+        : r.bal < 0
+          // Paid more than owed: the shop owes them (blue, never a tick).
+          ? '<span class="end credit-text"><div class="amount big num">' + icon('cash') + ' ' + money(-r.bal) + '</div>' +
+            '<div class="meta credit-text">' + esc(t('creditShort')) + '</div></span>'
+          : '<span class="end paid-text" aria-label="' + esc(t('clear')) + '">' + icon('checkBig', 'xl') + '</span>') +
       '</button>';
   }
 
@@ -1118,8 +1142,10 @@
     var shown = rows.filter(function (r) {
       return !q || r.c.name.toLowerCase().indexOf(q) >= 0 || (r.c.phone || '').indexOf(q) >= 0;
     }).sort(function (a, b) {
-      if ((a.bal > 0) !== (b.bal > 0)) return a.bal > 0 ? -1 : 1;
-      return a.bal > 0 ? b.bal - a.bal : a.c.name.localeCompare(b.c.name);
+      // Owing first (biggest first), then credit, then paid up.
+      var rank = function (x) { return x.bal > 0 ? 0 : x.bal < 0 ? 1 : 2; };
+      if (rank(a) !== rank(b)) return rank(a) - rank(b);
+      return a.bal !== b.bal ? Math.abs(b.bal) - Math.abs(a.bal) : a.c.name.localeCompare(b.c.name);
     });
 
     var html =
@@ -1127,6 +1153,7 @@
         '<div class="label">' + icon('wallet') + esc(t('toCollect')) + '</div>' +
         '<div class="big num">' + money(tot.total) + '</div>' +
         '<div class="sub">' + icon('users') + '<b class="num">' + tot.owing + '</b></div>' +
+        (tot.credit ? '<div class="sub credit-line">' + icon('cash') + esc(t('creditTotal', { amt: money(tot.credit) })) + '</div>' : '') +
       '</section>';
 
     if (IS_IOS && !IS_STANDALONE) html += iosInstallCardHtml();
@@ -1213,7 +1240,10 @@
         '<div class="name">' + esc(c.name) + '</div>' +
         (bal > 0
           ? '<div class="balance num owe-text">' + money(bal) + '</div>'
-          : '<div class="balance paid-text">' + icon('checkBig', 'xl') + '</div>') +
+          : bal < 0
+            ? '<div class="balance num credit-text">' + icon('cash', 'xl') + ' ' + money(-bal) + '</div>' +
+              '<div class="credit-label">' + esc(t('creditLong')) + '</div>'
+            : '<div class="balance paid-text">' + icon('checkBig', 'xl') + '</div>') +
         (quick ? '<div class="quick">' + quick + '</div>' : '') +
       '</section>' +
       '<div class="actions big">' +
