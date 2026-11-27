@@ -10,7 +10,7 @@
 
   var STORAGE_KEY = 'debtbook.v1';
   var BACKUP_REMIND_DAYS = 3;
-  var APP_VERSION = '1.13';
+  var APP_VERSION = '1.14';
   var I18N = window.I18N;
 
   // ---------- Data ----------
@@ -249,6 +249,8 @@
         // If the login simply expired, keep the records on the phone;
         // they belong to data.owner and are merged back at the next sign-in.
         account = null;
+        membership = null;
+        membershipKnown = false;
       }
       signingIn = false;
       signingOut = false;
@@ -294,6 +296,12 @@
     },
 
     toastKey: function (key) { toast(t(key)); },
+
+    onMembership: function (m, meta) {
+      membership = m;
+      if (m || (meta && !meta.fromCache)) membershipKnown = true;
+      safeRender();
+    },
 
     // An upload was refused: keep the records and remember to try again.
     writeFailed: function (e) {
@@ -637,7 +645,8 @@
     root.querySelectorAll('[data-go]').forEach(function (b) {
       b.addEventListener('click', function () { location.hash = b.dataset.go; });
     });
-    root.querySelectorAll('[data-add-customer]').forEach(function (b) { b.addEventListener('click', addCustomer); });
+    root.querySelectorAll('[data-add-customer]').forEach(function (b) { b.addEventListener('click', needMember(addCustomer)); });
+    root.querySelectorAll('[data-renew]').forEach(function (b) { b.addEventListener('click', openMembershipSheet); });
   }
 
   // ---------- Dialog (bottom sheet) ----------
@@ -791,6 +800,110 @@
   function shake(el) {
     if (!el) return;
     el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake');
+  }
+
+  // ---------- Membership ----------
+  // Free trial, then monthly / yearly / lifetime paid by M-Pesa and switched
+  // on by the admin. The server rules are what really enforce it; this only
+  // shows the state and explains how to pay. Reading and exporting records
+  // always works.
+  var MEMBER = window.DEYN_MEMBERSHIP || { trialDays: 30, prices: {}, currency: 'KSh', mpesa: '', whatsapp: '' };
+  var membership = null;          // { plan, until, startedAt } from the server
+  var membershipKnown = false;
+
+  function memberInfo() {
+    if (!cloudAvailable || !authKnown) return { active: true, unknown: true };
+    if (!account) return { active: false, reason: 'signin' };
+    if (isAdmin()) return { active: true, plan: 'lifetime' };
+    if (!membershipKnown) return { active: true, unknown: true };
+    var m = membership;
+    var now = Date.now();
+    if (!m) return { active: true, plan: 'trial', daysLeft: MEMBER.trialDays };   // trial being created
+    if (m.plan === 'lifetime') return { active: true, plan: 'lifetime' };
+    if (m.plan === 'trial') {
+      var end = (m.startedAt || now) + MEMBER.trialDays * DAY;
+      return { active: now < end, plan: 'trial', until: end, daysLeft: Math.max(0, Math.ceil((end - now) / DAY)) };
+    }
+    if (m.plan === 'monthly' || m.plan === 'yearly') {
+      return { active: !!m.until && now < m.until, plan: m.plan, until: m.until,
+        daysLeft: Math.max(0, Math.ceil(((m.until || 0) - now) / DAY)) };
+    }
+    return { active: false, plan: m.plan || 'stopped' };
+  }
+
+  // Run fn only with an active membership; otherwise explain what to do.
+  function needMember(fn) {
+    return function () {
+      var info = memberInfo();
+      if (info.active) return fn.apply(this, arguments);
+      if (info.reason === 'signin') return openSignInSheet();
+      openMembershipSheet();
+    };
+  }
+
+  function priceRows() {
+    var p = MEMBER.prices || {}, cur = MEMBER.currency || '';
+    return ['monthly', 'yearly', 'lifetime'].filter(function (k) { return p[k]; }).map(function (k) {
+      return '<div class="price-row"><span>' + esc(t('plan_' + k)) + '</span><b class="num">' + esc(cur) + ' ' + Number(p[k]).toLocaleString('en-KE') + '</b></div>';
+    }).join('');
+  }
+
+  function openMembershipSheet() {
+    var info = memberInfo();
+    var email = account && account.email || '';
+    var msg = t('payWhatsappText', { email: email, shop: data.settings.shopName || '' });
+    var title = info.active ? t('memberRenewTitle') : t('memberExpiredTitle');
+    openDialog(
+      '<div class="sheet-head"><span class="tx-icon big" style="background:var(--brand-soft);color:var(--brand-text)">' + icon('wallet') + '</span>' +
+        '<div class="grow"><h2>' + esc(title) + '</h2><div class="sub">' + esc(t('memberWhy')) + '</div></div>' +
+        '<button class="icon-btn plain" value="cancel" formnovalidate aria-label="' + esc(t('cancel')) + '">' + icon('x') + '</button></div>' +
+      '<div class="prices">' + priceRows() + '</div>' +
+      '<ol class="pay-steps">' +
+        '<li>' + esc(t('payStep1')) + '<div class="mpesa num">' + esc(MEMBER.mpesa) + '</div></li>' +
+        '<li>' + esc(t('payStep2')) + '</li>' +
+        '<li>' + esc(t('payStep3')) + '</li>' +
+      '</ol>' +
+      (MEMBER.whatsapp ? '<a class="btn block wa-btn" target="_blank" rel="noopener" href="https://wa.me/' + esc(MEMBER.whatsapp) + '?text=' + encodeURIComponent(msg) + '">' + icon('whatsapp') + esc(t('payWhatsapp')) + '</a>' : '') +
+      '<p class="hint">' + icon('shield') + ' ' + esc(t('memberReadOnly')) + '</p>',
+      function () { return true; }, true);
+  }
+
+  function openSignInSheet() {
+    openDialog(
+      '<div class="sheet-head"><span class="tx-icon big" style="background:var(--brand-soft);color:var(--brand-text)">' + icon('cloud') + '</span>' +
+        '<div class="grow"><h2>' + esc(t('trialSignInTitle', { n: MEMBER.trialDays })) + '</h2><div class="sub">' + esc(t('trialSignInText')) + '</div></div>' +
+        '<button class="icon-btn plain" value="cancel" formnovalidate aria-label="' + esc(t('cancel')) + '">' + icon('x') + '</button></div>' +
+      '<button type="button" class="btn block google-btn" data-signin style="margin-top:14px">' + GOOGLE_G + esc(t('signIn')) + '</button>',
+      function () { return true; }, true);
+    wire(dialogForm);
+    dialogForm.querySelectorAll('[data-signin]').forEach(function (b) { b.addEventListener('click', function () { dialog.close(); }); });
+  }
+
+  function planLabel(info) {
+    if (info.plan === 'lifetime') return t('plan_lifetime');
+    if (info.plan === 'trial') return info.active ? t('trialLeft', { n: info.daysLeft }) : t('trialOver');
+    if (info.plan === 'monthly' || info.plan === 'yearly') {
+      return info.active ? t('planUntil', { plan: t('plan_' + info.plan), date: niceDateMs(info.until) }) : t('memberExpired');
+    }
+    return t('memberStopped');
+  }
+
+  function niceDateMs(ms) {
+    var d = new Date(ms);
+    return niceDate(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'));
+  }
+
+  // Card on the home screen: when expired, or near the end of a trial/plan.
+  function memberCardHtml() {
+    if (!account) return '';
+    var info = memberInfo();
+    if (info.unknown || info.plan === 'lifetime') return '';
+    if (info.active && !(info.daysLeft <= 7)) return '';
+    return '<section class="card member-card ' + (info.active ? 'soon' : 'expired') + '">' +
+      '<span class="chip">' + icon(info.active ? 'clock' : 'lock') + '</span>' +
+      '<div class="body"><p><b>' + esc(info.active ? planLabel(info) : t('memberExpiredTitle')) + '</b><br>' +
+        esc(info.active ? t('memberSoonText') : t('memberExpiredText')) + '</p>' +
+      '<button type="button" class="btn block" data-renew>' + icon('wallet') + esc(t('memberRenewBtn')) + '</button></div></section>';
   }
 
   // ---------- PIN lock ----------
@@ -1167,6 +1280,7 @@
       '</section>';
 
     if (IS_IOS && !IS_STANDALONE) html += iosInstallCardHtml();
+    html += memberCardHtml();
     if (!data.customers.length) {
       html += '<section class="card"><h3>' + esc(t('chooseLanguage')) + '</h3><div style="margin-top:10px">' + langSegmented() + '</div></section>';
     }
@@ -1269,9 +1383,9 @@
     html += '<div style="margin-top:24px;text-align:center"><button type="button" class="btn danger-text" id="delCustomerBtn">' + icon('trash') + esc(t('deleteCustomer')) + '</button></div>';
     app.innerHTML = html;
 
-    document.getElementById('editBtn').addEventListener('click', function () { editCustomer(c); });
-    document.getElementById('debtBtn').addEventListener('click', function () { addEntry(c, 'debt'); });
-    document.getElementById('payBtn').addEventListener('click', function () { addEntry(c, 'payment'); });
+    document.getElementById('editBtn').addEventListener('click', needMember(function () { editCustomer(c); }));
+    document.getElementById('debtBtn').addEventListener('click', needMember(function () { addEntry(c, 'debt'); }));
+    document.getElementById('payBtn').addEventListener('click', needMember(function () { addEntry(c, 'payment'); }));
     app.querySelectorAll('[data-del]').forEach(function (b) {
       b.addEventListener('click', function () {
         var e = data.entries.find(function (x) { return x.id === b.dataset.del; });
@@ -1440,6 +1554,23 @@
       return t('agoDay', { n: Math.round(h / 24) });
     };
     var plat = { android: 'Android', iphone: 'iPhone', computer: 'PC' };
+    // Membership state of one shop, as the server rules see it.
+    var memberOf = function (x) {
+      var m = x.member;
+      if (!m) return { key: 'none', label: t('adminNoMember'), active: false };
+      if (m.plan === 'lifetime') return { key: 'life', label: t('plan_lifetime'), active: true };
+      if (m.plan === 'trial') {
+        var end = (m.startedAt || now) + MEMBER.trialDays * DAY;
+        return now < end ? { key: 'trial', label: t('trialLeft', { n: Math.ceil((end - now) / DAY) }), active: true }
+          : { key: 'expired', label: t('trialOver'), active: false };
+      }
+      if ((m.plan === 'monthly' || m.plan === 'yearly') && m.until > now) {
+        return { key: 'paid', label: t('planUntil', { plan: t('plan_' + m.plan), date: ago.date(m.until) }), active: true };
+      }
+      return { key: 'expired', label: m.plan === 'stopped' ? t('memberStopped') : t('memberExpired'), active: false };
+    };
+    ago.date = function (ms) { return niceDateMs(ms); };
+    var count = function (k) { return list.filter(function (x) { return memberOf(x).key === k; }).length; };
     var html =
       '<div class="report-grid">' +
         '<div class="stat wide"><div class="top"><span class="chip brand">' + icon('store') + '</span>' + esc(t('adminShops')) + '</div>' +
@@ -1449,7 +1580,13 @@
         stat(t('adminWeek'), within(7 * DAY), 'brand', 'users') +
         stat(t('adminMonth'), within(30 * DAY), 'brand', 'chart') +
         stat(t('adminRecords'), list.reduce(function (n, x) { return n + (x.entries || 0); }, 0).toLocaleString('en-KE'), 'owe', 'basket') +
+        stat(t('adminPaid'), count('paid') + count('life'), 'paid', 'wallet') +
+        stat(t('adminTrials'), count('trial'), 'brand', 'clock') +
+        stat(t('adminExpired'), count('expired') + count('none'), 'owe', 'lock') +
       '</div>' +
+      (list.some(function (x) { return memberOf(x).key !== 'life'; })
+        ? '<button type="button" class="btn block soft" id="lifeAllBtn" style="margin-bottom:6px">' + icon('check') + esc(t('adminLifeAll')) + '</button>'
+        : '') +
       '<div class="section-head"><h2>' + esc(t('adminList')) + '</h2>' +
         '<button type="button" class="link-btn" id="adminRefresh">' + icon('undo') + ' ' + esc(t('refresh')) + '</button></div>';
     html += list.length
@@ -1460,12 +1597,54 @@
             (x.email ? '<div class="meta admin-email">' + esc(x.email) + '</div>' : '') +
             '<div class="meta">' + esc(t('adminCounts', { c: x.customers || 0, e: x.entries || 0 })) + ' · ' +
               esc((plat[x.platform] || '') + (x.version ? ' · v' + x.version : '')) + '</div></span>' +
-            '<span class="end"><div class="meta">' + esc(ago(x.lastOpen)) + '</div></span></div>';
+            '<span class="end"><div class="meta">' + esc(ago(x.lastOpen)) + '</div></span></div>' +
+            '<div class="member-row"><span class="badge ' + memberOf(x).key + '">' + esc(memberOf(x).label) + '</span>' +
+              '<span class="member-btns">' +
+                '<button type="button" class="btn small soft" data-plan="month" data-uid="' + esc(x.uid) + '">+1 ' + esc(t('adminMonthBtn')) + '</button>' +
+                '<button type="button" class="btn small soft" data-plan="year" data-uid="' + esc(x.uid) + '">+1 ' + esc(t('adminYearBtn')) + '</button>' +
+                '<button type="button" class="btn small soft" data-plan="life" data-uid="' + esc(x.uid) + '">' + esc(t('plan_lifetime')) + '</button>' +
+                (memberOf(x).active ? '<button type="button" class="btn small danger-text" data-plan="stop" data-uid="' + esc(x.uid) + '">' + esc(t('adminStop')) + '</button>' : '') +
+              '</span></div>';
         }).join('') + '</div>'
       : '<div class="list-card">' + emptyState('users', '', t('adminEmpty')) + '</div>';
     html += '<p class="hint">' + icon('shield') + ' ' + esc(t('adminPrivacy')) + '</p>';
     app.innerHTML = html;
     document.getElementById('adminRefresh').addEventListener('click', function () { adminCache = null; render(); });
+
+    // Switch memberships on/off. Paid time is added after any time left.
+    var find = function (uid) { return list.find(function (x) { return x.uid === uid; }); };
+    var apply = function (x, kind) {
+      var m = x.member || {};
+      var base = Math.max(now, (m.plan === 'monthly' || m.plan === 'yearly') ? (m.until || 0) : 0,
+        m.plan === 'trial' ? (m.startedAt || now) + MEMBER.trialDays * DAY : 0);
+      var add = function (months) { var d = new Date(base); d.setMonth(d.getMonth() + months); return d.getTime(); };
+      if (kind === 'month') return cloud().setMembership(x.uid, 'monthly', add(1), x.email);
+      if (kind === 'year') return cloud().setMembership(x.uid, 'yearly', add(12), x.email);
+      if (kind === 'life') return cloud().setMembership(x.uid, 'lifetime', 0, x.email);
+      return cloud().setMembership(x.uid, 'stopped', 0, x.email);
+    };
+    app.querySelectorAll('[data-plan]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var x = find(b.dataset.uid);
+        if (!x) return;
+        var who = x.shopName || x.email || '';
+        if (!confirm(t('adminConfirm_' + b.dataset.plan, { who: who }))) return;
+        b.disabled = true;
+        apply(x, b.dataset.plan).then(function () {
+          toast(t('saved') + ' ✔');
+          adminCache = null; render();
+        }).catch(function (e) { b.disabled = false; alert(t('adminFailed') + ' (' + (e.code || e.message) + ')'); });
+      });
+    });
+    var lifeAll = document.getElementById('lifeAllBtn');
+    if (lifeAll) lifeAll.addEventListener('click', function () {
+      var todo = list.filter(function (x) { return memberOf(x).key !== 'life'; });
+      if (!confirm(t('adminLifeAllConfirm', { n: todo.length }))) return;
+      lifeAll.disabled = true;
+      Promise.all(todo.map(function (x) { return apply(x, 'life'); })).then(function () {
+        toast(t('saved') + ' ✔'); adminCache = null; render();
+      }).catch(function (e) { lifeAll.disabled = false; alert(t('adminFailed') + ' (' + (e.code || e.message) + ')'); });
+    });
   }
 
   // ---------- Settings ----------
@@ -1499,6 +1678,16 @@
       }
     }
 
+    if (account && !isAdmin()) {
+      var mi = memberInfo();
+      if (!mi.unknown) {
+        html += '<div class="group-title">' + esc(t('memberTitle')) + '</div>' +
+          '<div class="list-card"><div class="account"><span class="avatar" style="background:' + (mi.active ? 'var(--paid-soft);color:var(--paid)' : 'var(--owe-soft);color:var(--owe)') + '">' + icon(mi.active ? 'check' : 'lock') + '</span>' +
+            '<div class="main"><div class="name">' + esc(planLabel(mi)) + '</div></div></div>' +
+          (mi.plan !== 'lifetime' ? '<button type="button" class="row-btn" data-renew><span class="chip">' + icon('wallet') + '</span><span class="main">' + esc(t('memberRenewBtn')) + '<span class="meta">' + esc(t('memberPricesShort', { m: MEMBER.prices.monthly, y: MEMBER.prices.yearly, l: MEMBER.prices.lifetime })) + '</span></span>' + icon('chevron') + '</button>' : '') +
+          '</div>';
+      }
+    }
     if (account) html += '<p class="hint">' + icon('shield') + ' ' + esc(t('privacyNote')) + '</p>';
 
     html += '<div class="group-title">' + esc(t('pinSection')) + '</div>' +
@@ -1545,6 +1734,7 @@
 
     document.getElementById('settingsForm').addEventListener('submit', function (ev) {
       ev.preventDefault();
+      if (!memberInfo().active) { openMembershipSheet(); return; }
       var fd = new FormData(ev.target);
       s.shopName = String(fd.get('shopName')).trim();
       s.currency = String(fd.get('currency')).trim();
@@ -1555,7 +1745,7 @@
     });
     document.getElementById('backupBtn').addEventListener('click', backup);
     var fileInput = document.getElementById('restoreFile');
-    document.getElementById('restoreBtn').addEventListener('click', function () { fileInput.click(); });
+    document.getElementById('restoreBtn').addEventListener('click', needMember(function () { fileInput.click(); }));
     fileInput.addEventListener('change', function () {
       if (fileInput.files[0]) restore(fileInput.files[0]);
       fileInput.value = '';

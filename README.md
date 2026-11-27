@@ -48,6 +48,18 @@ records (see `firestore.rules`).
   The PIN protects the phone; the server rules protect the records.
 - The values in `firebase-config.js` are public identifiers, not secrets.
 
+## Membership (free trial, then paid)
+
+- New accounts get a **free 30-day trial** automatically.
+- Then **Monthly / Yearly / Lifetime**, paid by **M-Pesa** to the number in
+  `firebase-config.js` (`DEYN_MEMBERSHIP`). The shop sends the M-Pesa message on
+  WhatsApp and the admin switches the membership on in the admin page.
+- `firestore.rules` enforces it: only the admin can give memberships, a user
+  can only start their own trial once, and saving records needs an active
+  membership. Reading and Excel export always work.
+- Prices and the M-Pesa number are in `firebase-config.js`; the trial length
+  is in both `firebase-config.js` and `firestore.rules` (30 days).
+
 ## Keeping records safe
 
 Records are saved on the phone itself. To protect them if the phone is lost:

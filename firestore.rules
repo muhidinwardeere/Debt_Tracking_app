@@ -18,6 +18,26 @@ service cloud.firestore {
     function isAdmin() {
       return request.auth != null && request.auth.uid in ['Qk7eYuDz7FMAQLfJKbdoPTKsE3t2'];
     }
+    // ---------- Membership ----------
+    // members/{uid}: a free trial (30 days from startedAt, by the server's
+    // clock), or monthly/yearly until a date, or lifetime. Only the admin
+    // can give or change memberships; a user can only start their own
+    // trial, once. Saving records needs an active membership; reading and
+    // exporting your own records always works.
+    function memberDoc(uid) {
+      return /databases/$(database)/documents/members/$(uid);
+    }
+    function isActive(uid) {
+      return isAdmin() || (exists(memberDoc(uid)) && activePlan(get(memberDoc(uid)).data));
+    }
+    function activePlan(m) {
+      return m.plan == 'lifetime'
+        || (m.plan == 'trial' && m.startedAt is timestamp
+            && request.time < m.startedAt + duration.value(30, 'd'))
+        || ((m.plan == 'monthly' || m.plan == 'yearly') && m.until is timestamp
+            && request.time < m.until);
+    }
+
     function okId(id) {
       return id is string && id.matches('^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$');
     }
@@ -41,7 +61,7 @@ service cloud.firestore {
     match /users/{uid}/customers/{id} {
       allow read: if isOwner(uid);
       allow delete: if isOwner(uid) && binnedLongEnough();
-      allow create, update: if isOwner(uid) && okId(id)
+      allow create, update: if isOwner(uid) && isActive(uid) && okId(id)
         && request.resource.data.keys().hasOnly(['name', 'phone', 'place', 'createdAt', 'deletedAt'])
         && request.resource.data.name is string
         && request.resource.data.name.size() > 0
@@ -55,9 +75,9 @@ service cloud.firestore {
     match /users/{uid}/entries/{id} {
       allow read: if isOwner(uid);
       allow delete: if isOwner(uid) && binnedLongEnough();
-      allow create: if isOwner(uid) && okId(id) && validEntry() && okDeletedAt();
+      allow create: if isOwner(uid) && isActive(uid) && okId(id) && validEntry() && okDeletedAt();
       // A saved debt or payment can only be moved to / out of the bin.
-      allow update: if isOwner(uid) && validEntry() && okDeletedAt()
+      allow update: if isOwner(uid) && isActive(uid) && validEntry() && okDeletedAt()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedAt']);
     }
     function validEntry() {
@@ -75,7 +95,7 @@ service cloud.firestore {
 
     match /users/{uid}/meta/settings {
       allow read: if isOwner(uid);
-      allow create, update: if isOwner(uid)
+      allow create, update: if isOwner(uid) && isActive(uid)
         && request.resource.data.keys().hasOnly(['shopName', 'currency'])
         && okText(request.resource.data, 'shopName', 60)
         && okText(request.resource.data, 'currency', 8);
@@ -102,6 +122,22 @@ service cloud.firestore {
               ? request.resource.data.firstSeen == request.time
               : request.resource.data.firstSeen == resource.data.firstSeen);
     }
+    match /members/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      // A user may start their own free trial, once.
+      allow create: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['plan', 'startedAt', 'email'])
+        && request.resource.data.plan == 'trial'
+        && request.resource.data.startedAt == request.time
+        && (request.resource.data.email == '' || request.resource.data.email == request.auth.token.email);
+      // Only the admin gives, extends or stops memberships.
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['plan', 'until', 'startedAt', 'email', 'updatedAt'])
+        && request.resource.data.plan in ['trial', 'monthly', 'yearly', 'lifetime', 'stopped']
+        && (request.resource.data.get('until', null) == null || request.resource.data.until is timestamp);
+      allow delete: if isAdmin();
+    }
+
     // The admin page reads all shops' counts at once.
     match /{path=**}/stats/{doc} {
       allow read: if isAdmin();

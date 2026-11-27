@@ -13,3 +13,13 @@ window.DEYN_FIREBASE_CONFIG = {
 // Google account ids (User UID in Firebase -> Authentication -> Users) that
 // may open the admin page with usage counts. Also listed in firestore.rules.
 window.DEYN_ADMINS = ['Qk7eYuDz7FMAQLfJKbdoPTKsE3t2'];
+
+// Membership: free trial, then paid by M-Pesa and switched on by the admin
+// on the admin page. TRIAL_DAYS must match the number in firestore.rules.
+window.DEYN_MEMBERSHIP = {
+  trialDays: 30,
+  prices: { monthly: 200, yearly: 1500, lifetime: 3000 },
+  currency: 'KSh',
+  mpesa: '0729428360',
+  whatsapp: '254729428360'
+};

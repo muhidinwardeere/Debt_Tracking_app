@@ -22,7 +22,7 @@ import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, collectionGroup, doc, onSnapshot, writeBatch, setDoc, deleteDoc, getDoc,
   waitForPendingWrites, connectFirestoreEmulator, getDocs, terminate, clearIndexedDbPersistence,
-  serverTimestamp
+  serverTimestamp, Timestamp
 } from 'firebase/firestore';
 
 const config = window.DEYN_FIREBASE_CONFIG;
@@ -53,6 +53,7 @@ function start() {
   let user = null;
   let unsubs = [];
   let relistenTimer = null;
+  let trialAsked = false;
   const RELISTEN_MS = emulatorRelisten() || 60000;
   // Local testing only: ?relisten=4000 shortens the wait.
   function emulatorRelisten() {
@@ -137,6 +138,23 @@ function start() {
     }, onErr));
     unsubs.push(onSnapshot(collection(db, userPath('entries')), LISTEN, (snap) => {
       App.applyRemote({ entries: snap.docs.map(withMeta) }, snap.metadata);
+    }, onErr));
+    // Membership (members/{uid}): written by the admin; the trial is the
+    // only thing a user can create for themselves (see firestore.rules).
+    unsubs.push(onSnapshot(doc(db, 'members', user.uid), LISTEN, (snap) => {
+      const ms = (v) => (v && typeof v.toMillis === 'function' ? v.toMillis() : 0);
+      if (!snap.exists()) {
+        App.onMembership(null, snap.metadata);
+        if (!snap.metadata.fromCache && !trialAsked) {
+          trialAsked = true;
+          setDoc(doc(db, 'members', user.uid), {
+            plan: 'trial', startedAt: serverTimestamp(), email: user.email || ''
+          }).catch((e) => console.warn('Trial not started', e.code));
+        }
+        return;
+      }
+      const x = snap.data({ serverTimestamps: 'estimate' });
+      App.onMembership({ plan: x.plan, until: ms(x.until), startedAt: ms(x.startedAt) }, snap.metadata);
     }, onErr));
     unsubs.push(onSnapshot(doc(db, userPath('meta', 'settings')), (snap) => {
       if (snap.exists()) App.applyRemote({ settings: snap.data() }, snap.metadata);
@@ -290,12 +308,34 @@ function start() {
     // Admin page: every shop's usage counts (the rules allow this only for
     // the accounts listed as admins).
     async adminStats() {
-      const snap = await getDocs(collectionGroup(db, 'stats'));
-      return snap.docs.map((d) => {
+      const ms = (v) => (v && typeof v.toMillis === 'function' ? v.toMillis() : 0);
+      const [snap, mem] = await Promise.all([
+        getDocs(collectionGroup(db, 'stats')),
+        getDocs(collection(db, 'members'))
+      ]);
+      const members = {};
+      mem.docs.forEach((d) => {
         const x = d.data();
-        const ms = (v) => (v && typeof v.toMillis === 'function' ? v.toMillis() : 0);
-        return { ...x, lastOpen: ms(x.lastOpen), firstSeen: ms(x.firstSeen) };
+        members[d.id] = { plan: x.plan, until: ms(x.until), startedAt: ms(x.startedAt), email: x.email || '' };
       });
+      const list = snap.docs.map((d) => {
+        const x = d.data();
+        const uid = d.ref.parent.parent.id;
+        return { ...x, uid, lastOpen: ms(x.lastOpen), firstSeen: ms(x.firstSeen), member: members[uid] || null };
+      });
+      // Members who never sent usage counts (older app) still appear.
+      Object.keys(members).forEach((uid) => {
+        if (!list.some((x) => x.uid === uid)) list.push({ uid, email: members[uid].email, member: members[uid] });
+      });
+      return list;
+    },
+
+    // Admin: set a shop's membership. until: milliseconds, or 0 for none
+    // (lifetime / stopped). Keeps when the trial started.
+    async setMembership(uid, plan, until, email) {
+      const data = { plan, until: until ? Timestamp.fromMillis(until) : null, updatedAt: serverTimestamp() };
+      if (email) data.email = email;
+      await setDoc(doc(db, 'members', uid), data, { merge: true });
     },
 
     putSettings(s) {

@@ -426,3 +426,27 @@ body.pin-open { overflow: hidden; }
 .hero .credit-line { font-size: 14px; opacity: .9; margin-top: 6px; }
 .hero .credit-line svg.i { width: 18px; height: 18px; }
 .admin-email { color: var(--brand-text) !important; font-weight: 500; }
+
+/* ---------- Membership ---------- */
+.member-card { display: flex; gap: 14px; align-items: flex-start; }
+.member-card .chip { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none; }
+.member-card.soon { border-color: color-mix(in srgb, var(--brand) 40%, var(--line)); }
+.member-card.soon .chip { background: var(--brand-soft); color: var(--brand-text); }
+.member-card.expired { border-color: color-mix(in srgb, var(--owe) 45%, var(--line)); background: var(--owe-soft); }
+.member-card.expired .chip { background: var(--surface); color: var(--owe); }
+.member-card .body { flex: 1; }
+.member-card p { color: var(--text); margin-bottom: 10px; }
+.prices { margin: 14px 0 6px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.price-row { display: flex; justify-content: space-between; padding: 12px 14px; font-size: 17px; }
+.price-row + .price-row { border-top: 1px solid var(--line); }
+.price-row b { color: var(--brand-text); }
+.pay-steps { padding-left: 22px; margin: 14px 0; line-height: 1.5; }
+.pay-steps li { margin-bottom: 8px; }
+.mpesa { font-size: 26px; font-weight: 700; color: var(--paid); letter-spacing: .02em; margin: 4px 0; user-select: all; }
+.wa-btn { background: #128c4a; color: #fff; }
+.member-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 14px 12px 70px; border-top: 0 !important; }
+.member-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.badge { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
+.badge.life, .badge.paid { background: var(--paid-soft); color: var(--paid); }
+.badge.trial { background: var(--brand-soft); color: var(--brand-text); }
+.badge.expired, .badge.none { background: var(--owe-soft); color: var(--owe); }
