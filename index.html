@@ -1,37 +1,44 @@
 <!doctype html>
-<html lang="en">
+<html lang="so">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cut">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#1d5fbf">
   <meta name="description" content="Deyn Book: simple debt book for small shops. Record what customers owe and what they pay back.">
   <title>Deyn Book</title>
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="preload" href="fonts/inter-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/inter-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="topbar">
-    <button id="backBtn" class="icon-btn" aria-label="Back" hidden>&#8592;</button>
+  <header class="appbar" id="appbar">
+    <button id="backBtn" class="icon-btn" type="button" hidden></button>
     <h1 id="title">Deyn Book</h1>
-    <button id="settingsBtn" class="icon-btn" aria-label="Settings">&#9881;</button>
+    <span id="syncBadge" class="sync-badge" hidden></span>
+    <span id="appbarAction"></span>
   </header>
 
   <main id="app"></main>
 
+  <nav class="bottom-nav" id="bottomNav"></nav>
+
   <div id="backupBanner" class="banner" hidden>
+    <span class="banner-icon" id="backupBannerIcon"></span>
     <span id="backupBannerText"></span>
-    <button id="backupNowBtn" class="btn small">Back up now</button>
+    <button id="backupNowBtn" class="btn small" type="button">Back up now</button>
   </div>
 
-  <dialog id="dialog">
+  <dialog id="dialog" class="sheet">
     <form id="dialogForm" method="dialog"></form>
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="firebase-config.js"></script>
+  <script src="icons.js"></script>
   <script src="i18n.js"></script>
   <script src="app.js"></script>
   <script type="module" src="cloud.bundle.js"></script>

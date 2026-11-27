@@ -10,6 +10,7 @@
 
   var STORAGE_KEY = 'debtbook.v1';
   var BACKUP_REMIND_DAYS = 3;
+  var APP_VERSION = '1.1';
   var I18N = window.I18N;
 
   // ---------- Data ----------
@@ -217,23 +218,6 @@
     });
   }
 
-  function signInCardHtml() {
-    return '<section class="card cloud-card">' +
-      '<p>☁️ ' + esc(t('signInExplain')) + '</p>' +
-      '<button class="btn block google-btn" data-signin>' + esc(t('signIn')) + '</button>' +
-      '</section>';
-  }
-
-  function wireCloudButtons(root) {
-    root.querySelectorAll('[data-signin]').forEach(function (b) { b.addEventListener('click', signIn); });
-    root.querySelectorAll('[data-signout]').forEach(function (b) { b.addEventListener('click', signOut); });
-  }
-
-  // Ask the browser not to clear our data when storage is low.
-  if (navigator.storage && navigator.storage.persist) {
-    navigator.storage.persist().catch(function () {});
-  }
-
   // ---------- Language ----------
   function lang() {
     var l = data.settings.lang;
@@ -250,9 +234,11 @@
 
   function applyStaticText() {
     document.documentElement.lang = lang();
-    document.getElementById('backBtn').setAttribute('aria-label', t('back'));
-    document.getElementById('settingsBtn').setAttribute('aria-label', t('settings'));
+    var back = document.getElementById('backBtn');
+    back.setAttribute('aria-label', t('back'));
+    back.innerHTML = icon('back');
     document.getElementById('backupNowBtn').textContent = t('backupNow');
+    document.getElementById('backupBannerIcon').innerHTML = icon('alert');
   }
 
   function setLang(code) {
@@ -361,24 +347,46 @@
     return n;
   }
 
-  function langButtons() {
-    return '<div class="lang-pick">' + I18N.LANGS.map(function (l) {
-      return '<button type="button" class="tab" data-lang="' + l.code + '" aria-pressed="' + (lang() === l.code) + '">' + esc(l.label) + '</button>';
+  // ---------- Icons ----------
+  function icon(name, cls) {
+    return '<svg class="i' + (cls ? ' ' + cls : '') + '" viewBox="0 0 24 24" aria-hidden="true">' + (window.ICONS[name] || '') + '</svg>';
+  }
+
+  var GOOGLE_G = '<svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>';
+
+  function signInCardHtml() {
+    return '<section class="card cloud">' +
+      '<span class="chip chip brand">' + icon('cloud') + '</span>' +
+      '<div class="body"><p>' + esc(t('signInExplain')) + '</p>' +
+      '<button type="button" class="btn block google-btn" data-signin>' + GOOGLE_G + esc(t('signIn')) + '</button></div>' +
+      '</section>';
+  }
+
+  function langSegmented() {
+    return '<div class="segmented" style="margin:0">' + I18N.LANGS.map(function (l) {
+      return '<button type="button" data-lang="' + l.code + '" aria-pressed="' + (lang() === l.code) + '">' + esc(l.label) + '</button>';
     }).join('') + '</div>';
   }
 
-  function wireLangButtons(root) {
+  // Buttons anywhere on the page use data-* attributes instead of ids.
+  function wire(root) {
+    root.querySelectorAll('[data-signin]').forEach(function (b) { b.addEventListener('click', signIn); });
+    root.querySelectorAll('[data-signout]').forEach(function (b) { b.addEventListener('click', signOut); });
     root.querySelectorAll('[data-lang]').forEach(function (b) {
       b.addEventListener('click', function () { setLang(b.dataset.lang); });
     });
+    root.querySelectorAll('[data-go]').forEach(function (b) {
+      b.addEventListener('click', function () { location.hash = b.dataset.go; });
+    });
+    root.querySelectorAll('[data-add-customer]').forEach(function (b) { b.addEventListener('click', addCustomer); });
   }
 
-  // ---------- Dialog ----------
+  // ---------- Dialog (bottom sheet) ----------
   var dialog = document.getElementById('dialog');
   var dialogForm = document.getElementById('dialogForm');
 
   function openDialog(html, onSubmit) {
-    dialogForm.innerHTML = html;
+    dialogForm.innerHTML = '<div class="grip"></div>' + html;
     dialogForm.onsubmit = function (ev) {
       var btn = ev.submitter;
       if (btn && btn.value === 'cancel') return; // closes
@@ -388,8 +396,10 @@
     };
     dialog.showModal();
     var first = dialogForm.querySelector('input, select, textarea');
-    if (first) setTimeout(function () { first.focus(); }, 50);
+    if (first) setTimeout(function () { first.focus(); }, 60);
   }
+  // Tap outside the sheet to close it.
+  dialog.addEventListener('click', function (e) { if (e.target === dialog) dialog.close(); });
 
   function dialogButtons(okClass) {
     return '<div class="buttons"><button class="btn ghost" value="cancel" formnovalidate>' + esc(t('cancel')) + '</button>' +
@@ -398,7 +408,8 @@
 
   function customerForm(c) {
     c = c || {};
-    return '<h2>' + esc(c.id ? t('editCustomer') : t('newCustomer')) + '</h2>' +
+    return '<div class="sheet-head"><span class="tx-icon" style="background:var(--brand-soft);color:var(--brand-text)">' + icon(c.id ? 'edit' : 'userPlus') + '</span>' +
+      '<h2>' + esc(c.id ? t('editCustomer') : t('newCustomer')) + '</h2></div>' +
       '<label for="f-name">' + esc(t('name')) + '</label>' +
       '<input id="f-name" name="name" required autocomplete="off" value="' + esc(c.name) + '">' +
       '<label for="f-phone">' + esc(t('phoneOpt')) + '</label>' +
@@ -436,10 +447,10 @@
   function addEntry(c, type) {
     var isDebt = type === 'debt';
     openDialog(
-      '<h2>' + esc(isDebt ? t('tookDebt') : t('paidBack')) + '</h2>' +
-      '<p style="margin:0;color:var(--muted)">' + esc(c.name) + '</p>' +
+      '<div class="sheet-head"><span class="tx-icon ' + type + '">' + icon(isDebt ? 'debt' : 'payment') + '</span>' +
+      '<div><h2>' + esc(isDebt ? t('tookDebt') : t('paidBack')) + '</h2><div class="sub">' + esc(c.name) + '</div></div></div>' +
       '<label for="f-amount">' + esc(t('amount', { cur: data.settings.currency })) + '</label>' +
-      '<input id="f-amount" name="amount" required inputmode="decimal" autocomplete="off" placeholder="0">' +
+      '<input id="f-amount" class="amount-input num" name="amount" required inputmode="decimal" autocomplete="off" placeholder="0">' +
       '<label for="f-note">' + esc(isDebt ? t('whatTaken') : t('noteOpt')) + '</label>' +
       '<input id="f-note" name="note" autocomplete="off" placeholder="' + esc(isDebt ? t('debtPh') : t('payPh')) + '">' +
       '<label for="f-date">' + esc(t('date')) + '</label>' +
@@ -461,103 +472,211 @@
     );
   }
 
-  // ---------- Views ----------
+  // ---------- Page frame (app bar + bottom menu) ----------
   var app = document.getElementById('app');
+  var appbar = document.getElementById('appbar');
   var titleEl = document.getElementById('title');
   var backBtn = document.getElementById('backBtn');
+  var syncBadge = document.getElementById('syncBadge');
+  var appbarAction = document.getElementById('appbarAction');
+  var bottomNav = document.getElementById('bottomNav');
   var filter = 'owing';
   var query = '';
+  var reportMonth = 0;
+
+  var NAV = [
+    { key: 'home', hash: '#/', icon: 'home', label: 'navHome' },
+    { key: 'customers', hash: '#/customers', icon: 'users', label: 'navCustomers' },
+    { key: 'reports', hash: '#/reports', icon: 'chart', label: 'navReports' },
+    { key: 'settings', hash: '#/settings', icon: 'settings', label: 'navSettings' }
+  ];
+
+  function frame(opts) {
+    titleEl.textContent = opts.title;
+    document.title = t('appName');
+    backBtn.hidden = !opts.back;
+    appbar.classList.toggle('has-back', !!opts.back);
+    appbarAction.innerHTML = opts.action || '';
+    var showSync = opts.nav === 'home' && cloudAvailable && authKnown && account;
+    syncBadge.hidden = !showSync;
+    if (showSync) syncBadge.innerHTML = icon('check') + esc(t('synced'));
+    app.classList.toggle('flush-top', !!opts.flush);
+    if (opts.nav) {
+      bottomNav.hidden = false;
+      bottomNav.innerHTML = NAV.map(function (n) {
+        return '<a href="' + n.hash + '"' + (n.key === opts.nav ? ' aria-current="page"' : '') + '>' +
+          '<span class="pill">' + icon(n.icon) + '</span>' + esc(t(n.label)) + '</a>';
+      }).join('');
+    } else {
+      bottomNav.hidden = true;
+    }
+    document.body.classList.toggle('no-nav', !opts.nav);
+  }
 
   function render() {
     var hash = location.hash || '#/';
     var m = hash.match(/^#\/c\/(.+)$/);
-    if (m) return renderCustomer(decodeURIComponent(m[1]));
-    if (hash === '#/settings') return renderSettings();
-    renderHome();
+    if (m) renderCustomer(decodeURIComponent(m[1]));
+    else if (hash === '#/customers') renderCustomers();
+    else if (hash === '#/reports') renderReports();
+    else if (hash === '#/settings') renderSettings();
+    else renderHome();
+    wire(app);
+    updateBackupBanner();
   }
 
-  function renderHome() {
-    titleEl.textContent = data.settings.shopName || t('appName');
-    document.title = t('appName');
-    backBtn.hidden = true;
+  // ---------- Shared bits ----------
+  function monthRange(offset) {
+    var d = new Date();
+    var s = new Date(d.getFullYear(), d.getMonth() + offset, 1);
+    var e = new Date(d.getFullYear(), d.getMonth() + offset + 1, 1);
+    function fmt(x) { return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-01'; }
+    return { start: fmt(s), end: fmt(e) };
+  }
 
-    var rows = data.customers.map(function (c) {
+  function sumIn(type, range) {
+    return data.entries.reduce(function (sum, e) {
+      return e.type === type && e.date >= range.start && e.date < range.end ? sum + e.amount : sum;
+    }, 0);
+  }
+
+  function customerRows() {
+    return data.customers.map(function (c) {
       return { c: c, bal: balanceOf(c.id), last: lastActivity(c.id) };
     });
-    var total = 0, owingCount = 0;
-    rows.forEach(function (r) { if (r.bal > 0) { total += r.bal; owingCount++; } });
+  }
 
+  function totals() {
+    var total = 0, owing = 0;
+    customerRows().forEach(function (r) { if (r.bal > 0) { total += r.bal; owing++; } });
+    return { total: total, owing: owing };
+  }
+
+  function customerItem(r) {
+    return '<button type="button" class="item" data-go="#/c/' + esc(encodeURIComponent(r.c.id)) + '">' +
+      '<span class="avatar">' + esc(initials(r.c.name)) + '</span>' +
+      '<span class="main"><div class="title">' + esc(r.c.name) + '</div>' +
+      '<div class="meta">' + esc(r.last ? t('lastActivity', { date: niceDate(r.last) }) : (r.c.phone || t('noRecords'))) + '</div></span>' +
+      '<span class="end"><div class="amount num ' + (r.bal > 0 ? 'owe-text' : 'paid-text') + '">' + esc(r.bal > 0 ? money(r.bal) : t('clear')) + '</div></span>' +
+      '</button>';
+  }
+
+  function entryItem(e, withCustomer, withDelete) {
+    var isDebt = e.type === 'debt';
+    var c = withCustomer ? findCustomer(e.customerId) : null;
+    var title = withCustomer ? (c ? c.name : '?') : (e.note || (isDebt ? t('debtOn') : t('paymentOn')));
+    var meta = withCustomer ? [e.note || (isDebt ? t('debtOn') : t('paymentOn')), niceDate(e.date)].join(' · ') : niceDate(e.date);
+    var tag = withCustomer && c ? 'button type="button" data-go="#/c/' + esc(encodeURIComponent(c.id)) + '"' : 'div';
+    return '<' + tag + ' class="item">' +
+      '<span class="tx-icon ' + e.type + '">' + icon(isDebt ? 'debt' : 'payment') + '</span>' +
+      '<span class="main"><div class="title">' + esc(title) + '</div><div class="meta">' + esc(meta) + '</div></span>' +
+      '<span class="end"><div class="amount num ' + (isDebt ? 'owe-text' : 'paid-text') + '">' + (isDebt ? '+' : '−') + money(e.amount) + '</div></span>' +
+      (withDelete ? '<button type="button" class="del-btn" data-del="' + esc(e.id) + '" aria-label="' + esc(t('deleteRecord')) + '">' + icon('trash') + '</button>' : '') +
+      '</' + tag.split(' ')[0] + '>';
+  }
+
+  function emptyState(iconName, title, text, withButton) {
+    return '<div class="empty"><span class="chip">' + icon(iconName) + '</span>' +
+      (title ? '<b>' + esc(title) + '</b>' : '') + esc(text || '') +
+      (withButton ? '<div><button type="button" class="btn" data-add-customer>' + icon('userPlus') + esc(t('addFirst')) + '</button></div>' : '') +
+      '</div>';
+  }
+
+  function fab() {
+    return '<button type="button" class="fab" data-add-customer>' + icon('plus') + esc(t('addCustomer').replace(/^\+\s*/, '')) + '</button>';
+  }
+
+  // ---------- Home ----------
+  function renderHome() {
+    frame({ title: data.settings.shopName || t('appName'), nav: 'home', flush: true });
+    var tot = totals();
+    var month = monthRange(0);
+    var html =
+      '<section class="hero">' +
+        '<div class="label">' + esc(t('toCollect')) + '</div>' +
+        '<div class="big num">' + money(tot.total) + '</div>' +
+        '<div class="sub">' + icon('users') + esc(t('owingCustomers', { n: tot.owing })) + '</div>' +
+      '</section>' +
+      '<div class="stats">' +
+        '<div class="stat"><div class="top"><span class="chip paid">' + icon('payment') + '</span>' + esc(t('collectedMonth')) + '</div>' +
+          '<div class="val num paid-text">' + money(sumIn('payment', month)) + '</div></div>' +
+        '<div class="stat"><div class="top"><span class="chip owe">' + icon('debt') + '</span>' + esc(t('givenMonth')) + '</div>' +
+          '<div class="val num owe-text">' + money(sumIn('debt', month)) + '</div></div>' +
+      '</div>';
+
+    if (!data.customers.length) {
+      html += '<section class="card"><h3>' + esc(t('chooseLanguage')) + '</h3><div style="margin-top:10px">' + langSegmented() + '</div></section>';
+    }
+    if (cloudAvailable && authKnown && !account) html += signInCardHtml();
+
+    if (!data.customers.length) {
+      html += '<div class="list-card">' + emptyState('wallet', t('getStarted'), t('getStartedText'), true) + '</div>';
+    } else {
+      var top = customerRows().filter(function (r) { return r.bal > 0; })
+        .sort(function (a, b) { return b.bal - a.bal; }).slice(0, 5);
+      if (top.length) {
+        html += '<div class="section-head"><h2>' + esc(t('topOwing')) + '</h2>' +
+          '<button type="button" class="link-btn" data-go="#/customers">' + esc(t('seeAll')) + '</button></div>' +
+          '<div class="list-card">' + top.map(customerItem).join('') + '</div>';
+      }
+      var recent = data.entries.slice().sort(function (a, b) {
+        return (b.date + b.createdAt).localeCompare(a.date + a.createdAt);
+      }).slice(0, 6);
+      html += '<div class="section-head"><h2>' + esc(t('recent')) + '</h2></div>' +
+        (recent.length
+          ? '<div class="list-card">' + recent.map(function (e) { return entryItem(e, true, false); }).join('') + '</div>'
+          : '<div class="list-card">' + emptyState('clock', '', t('noRecords')) + '</div>');
+    }
+    html += fab();
+    app.innerHTML = html;
+  }
+
+  // ---------- Customers ----------
+  function renderCustomers() {
+    frame({ title: t('navCustomers'), nav: 'customers' });
+    var rows = customerRows();
     var q = query.toLowerCase();
     var shown = rows.filter(function (r) {
       if (filter === 'owing' && r.bal <= 0) return false;
       if (!q) return true;
       return r.c.name.toLowerCase().indexOf(q) >= 0 || (r.c.phone || '').indexOf(q) >= 0;
-    });
-    shown.sort(function (a, b) {
-      if (filter === 'owing') return b.bal - a.bal;
-      return a.c.name.localeCompare(b.c.name);
+    }).sort(function (a, b) {
+      return filter === 'owing' ? b.bal - a.bal : a.c.name.localeCompare(b.c.name);
     });
 
-    var html = '';
-
-    if (!data.customers.length) {
-      // First use: let the person pick their language straight away.
-      html += '<section class="card"><div class="section-title" style="margin-top:0">' +
-        esc(t('chooseLanguage')) + '</div>' + langButtons() + '</section>';
-    }
-
-    if (cloudAvailable && authKnown && !account) html += signInCardHtml();
-
-    html +=
-      '<section class="summary">' +
-        '<div class="label">' + esc(t('totalOwe')) + '</div>' +
-        '<div class="big">' + money(total) + '</div>' +
-        '<div class="sub">' + esc(t('owingCount', { n: owingCount, total: data.customers.length })) + '</div>' +
-      '</section>' +
-      '<input class="search" id="search" type="search" placeholder="' + esc(t('searchPh')) + '" value="' + esc(query) + '">' +
-      '<div class="tabs">' +
-        '<button class="tab" data-filter="owing" aria-pressed="' + (filter === 'owing') + '">' + esc(t('tabOwing')) + '</button>' +
-        '<button class="tab" data-filter="all" aria-pressed="' + (filter === 'all') + '">' + esc(t('tabAll')) + '</button>' +
+    var html =
+      '<div class="search-wrap">' + icon('search') +
+        '<input class="search" id="search" type="search" placeholder="' + esc(t('searchPh')) + '" value="' + esc(query) + '"></div>' +
+      '<div class="segmented">' +
+        '<button type="button" data-filter="owing" aria-pressed="' + (filter === 'owing') + '">' + esc(t('tabOwing')) + '</button>' +
+        '<button type="button" data-filter="all" aria-pressed="' + (filter === 'all') + '">' + esc(t('tabAll')) + ' (' + rows.length + ')</button>' +
       '</div>';
 
-    if (!data.customers.length) {
-      html += '<div class="empty">' + t('emptyNone') + '</div>';
+    if (!rows.length) {
+      html += '<div class="list-card">' + emptyState('users', t('getStarted'), t('getStartedText'), true) + '</div>';
     } else if (!shown.length) {
-      html += '<div class="empty">' + (q ? esc(t('noMatch', { q: query })) : esc(t('nobodyOwes'))) + '</div>';
+      html += '<div class="list-card">' + emptyState(q ? 'search' : 'check', '', q ? t('noMatch', { q: query }) : t('nobodyOwes')) + '</div>';
     } else {
-      html += '<ul class="list">' + shown.map(function (r) {
-        return '<li><button class="row" data-id="' + esc(r.c.id) + '">' +
-          '<span class="avatar">' + esc(initials(r.c.name)) + '</span>' +
-          '<span class="main"><div class="name">' + esc(r.c.name) + '</div>' +
-          '<div class="meta">' + esc(r.last ? t('lastActivity', { date: niceDate(r.last) }) : t('noRecords')) + '</div></span>' +
-          '<span class="amount ' + (r.bal > 0 ? 'owe' : 'clear') + '">' + esc(r.bal > 0 ? money(r.bal) : t('clear')) + '</span>' +
-          '</button></li>';
-      }).join('') + '</ul>';
+      html += '<div class="list-card">' + shown.map(customerItem).join('') + '</div>';
     }
-
-    html += '<button class="fab" id="addCustomerBtn">' + esc(t('addCustomer')) + '</button>';
+    html += fab();
     app.innerHTML = html;
 
-    wireLangButtons(app);
-    wireCloudButtons(app);
     var search = document.getElementById('search');
     search.addEventListener('input', function () {
       query = search.value;
       var pos = search.selectionStart;
-      renderHome();
+      render();
       var s2 = document.getElementById('search');
       s2.focus();
       try { s2.setSelectionRange(pos, pos); } catch (e) {}
     });
     app.querySelectorAll('[data-filter]').forEach(function (b) {
-      b.addEventListener('click', function () { filter = b.dataset.filter; renderHome(); });
+      b.addEventListener('click', function () { filter = b.dataset.filter; render(); });
     });
-    app.querySelectorAll('.row').forEach(function (b) {
-      b.addEventListener('click', function () { location.hash = '#/c/' + encodeURIComponent(b.dataset.id); });
-    });
-    document.getElementById('addCustomerBtn').addEventListener('click', addCustomer);
   }
 
+  // ---------- One customer ----------
   function reminderText(c, bal) {
     var shop = data.settings.shopName ? t('reminderShop', { shop: data.settings.shopName }) : '';
     return t('reminder', { name: c.name, shop: shop, amt: money(bal) });
@@ -565,56 +684,58 @@
 
   function renderCustomer(id) {
     var c = findCustomer(id);
-    if (!c) { location.hash = '#/'; return; }
-    titleEl.textContent = c.name;
-    backBtn.hidden = false;
+    if (!c) { location.hash = '#/customers'; return; }
+    frame({
+      title: c.name, back: true,
+      action: '<button type="button" class="icon-btn" id="editBtn" aria-label="' + esc(t('edit')) + '">' + icon('edit') + '</button>'
+    });
 
     var bal = balanceOf(c.id);
     var list = entriesOf(c.id);
     var phone = cleanPhone(c.phone);
     var msg = reminderText(c, bal);
 
-    var html =
-      '<section class="summary">' +
-        '<div class="label">' + esc(bal > 0 ? t('owesYou') : bal < 0 ? t('overpaid') : t('balance')) + '</div>' +
-        '<div class="big" style="color:' + (bal > 0 ? 'var(--owe)' : 'var(--paid)') + '">' + esc(bal === 0 ? t('clear') : money(Math.abs(bal))) + '</div>' +
-        '<div class="sub">' + esc([c.phone, c.place].filter(Boolean).join(' · ')) + '</div>' +
-      '</section>' +
-      '<div class="actions">' +
-        '<button class="btn owe" id="debtBtn">+ ' + esc(t('tookDebt')) + '</button>' +
-        '<button class="btn paid" id="payBtn">− ' + esc(t('paidBack')) + '</button>' +
-      '</div>' +
-      '<div class="links">' +
-        (phone ? '<a class="btn ghost small" href="tel:' + esc(phone) + '">📞 ' + esc(t('call')) + '</a>' : '') +
-        (phone && bal > 0 ? '<a class="btn ghost small" target="_blank" rel="noopener" href="https://wa.me/' + esc(waNumber(phone)) + '?text=' + encodeURIComponent(msg) + '">💬 ' + esc(t('waReminder')) + '</a>' : '') +
-        (phone && bal > 0 ? '<a class="btn ghost small" href="sms:' + esc(phone) + '?body=' + encodeURIComponent(msg) + '">✉️ ' + esc(t('smsReminder')) + '</a>' : '') +
-        '<button class="btn ghost small" id="editBtn">✏️ ' + esc(t('edit')) + '</button>' +
-      '</div>' +
-      '<div class="section-title">' + esc(t('history')) + '</div>';
-
-    if (!list.length) {
-      html += '<div class="empty">' + esc(t('noRecordsCustomer')) + '</div>';
+    var quick = '';
+    if (phone) {
+      quick += '<a href="tel:' + esc(phone) + '"><span class="circle">' + icon('phone') + '</span>' + esc(t('call')) + '</a>';
+      if (bal > 0) {
+        quick += '<a target="_blank" rel="noopener" href="https://wa.me/' + esc(waNumber(phone)) + '?text=' + encodeURIComponent(msg) + '"><span class="circle wa">' + icon('whatsapp') + '</span>WhatsApp</a>';
+        quick += '<a href="sms:' + esc(phone) + '?body=' + encodeURIComponent(msg) + '"><span class="circle">' + icon('sms') + '</span>SMS</a>';
+      }
     } else {
-      html += '<ul class="list">' + list.map(function (e) {
-        return '<li class="entry ' + e.type + '">' +
-          '<span class="tag">' + esc(e.type === 'debt' ? t('tagDebt') : t('tagPaid')) + '</span>' +
-          '<div class="main"><div class="amount">' + money(e.amount) + '</div>' +
-          (e.note ? '<div class="note">' + esc(e.note) + '</div>' : '') +
-          '<div class="meta">' + esc(niceDate(e.date)) + '</div></div>' +
-          '<button class="del" data-id="' + esc(e.id) + '" aria-label="' + esc(t('deleteRecord')) + '">🗑</button>' +
-          '</li>';
-      }).join('') + '</ul>';
+      quick += '<button type="button" id="addPhoneBtn"><span class="circle">' + icon('phone') + '</span>' + esc(t('phoneOpt').replace(/\s*\(.*\)/, '')) + '</button>';
     }
 
-    html += '<div style="margin-top:24px"><button class="btn danger block" id="delCustomerBtn">' + esc(t('deleteCustomer')) + '</button></div>';
+    var html =
+      '<section class="card profile">' +
+        '<div class="avatar lg">' + esc(initials(c.name)) + '</div>' +
+        '<div class="name">' + esc(c.name) + '</div>' +
+        '<div class="meta">' + esc([c.phone, c.place].filter(Boolean).join(' · ')) + '</div>' +
+        '<div class="balance-label">' + esc(bal > 0 ? t('owesYou') : bal < 0 ? t('overpaid') : t('balance')) + '</div>' +
+        '<div class="balance num ' + (bal > 0 ? 'owe-text' : 'paid-text') + '">' + esc(bal === 0 ? t('clear') : money(Math.abs(bal))) + '</div>' +
+        '<div class="quick">' + quick + '</div>' +
+      '</section>' +
+      '<div class="actions">' +
+        '<button type="button" class="btn owe" id="debtBtn">' + icon('debt') + esc(t('tookDebt')) + '</button>' +
+        '<button type="button" class="btn paid" id="payBtn">' + icon('payment') + esc(t('paidBack')) + '</button>' +
+      '</div>' +
+      '<div class="section-head"><h2>' + esc(t('history')) + '</h2></div>';
+
+    html += list.length
+      ? '<div class="list-card">' + list.map(function (e) { return entryItem(e, false, true); }).join('') + '</div>'
+      : '<div class="list-card">' + emptyState('clock', '', t('noRecordsCustomer')) + '</div>';
+
+    html += '<div style="margin-top:20px;text-align:center"><button type="button" class="btn danger-text" id="delCustomerBtn">' + icon('trash') + esc(t('deleteCustomer')) + '</button></div>';
     app.innerHTML = html;
 
+    document.getElementById('editBtn').addEventListener('click', function () { editCustomer(c); });
+    var addPhone = document.getElementById('addPhoneBtn');
+    if (addPhone) addPhone.addEventListener('click', function () { editCustomer(c); });
     document.getElementById('debtBtn').addEventListener('click', function () { addEntry(c, 'debt'); });
     document.getElementById('payBtn').addEventListener('click', function () { addEntry(c, 'payment'); });
-    document.getElementById('editBtn').addEventListener('click', function () { editCustomer(c); });
-    app.querySelectorAll('.del').forEach(function (b) {
+    app.querySelectorAll('[data-del]').forEach(function (b) {
       b.addEventListener('click', function () {
-        var e = data.entries.find(function (x) { return x.id === b.dataset.id; });
+        var e = data.entries.find(function (x) { return x.id === b.dataset.del; });
         if (!e) return;
         if (!confirm(t('confirmDelRecord', { amt: money(e.amount) }))) return;
         data.entries = data.entries.filter(function (x) { return x.id !== e.id; });
@@ -629,65 +750,107 @@
       data.customers = data.customers.filter(function (x) { return x.id !== c.id; });
       data.entries = data.entries.filter(function (x) { return x.customerId !== c.id; });
       changed(function (cl) { cl.deleteCustomer(c.id, entryIds); });
-      location.hash = '#/';
+      location.hash = '#/customers';
       toast(t('customerDeleted'));
     });
   }
 
+  // ---------- Reports ----------
+  function renderReports() {
+    frame({ title: t('navReports'), nav: 'reports' });
+    var range = monthRange(reportMonth);
+    var given = sumIn('debt', range);
+    var paid = sumIn('payment', range);
+    var tot = totals();
+    var top = customerRows().filter(function (r) { return r.bal > 0; })
+      .sort(function (a, b) { return b.bal - a.bal; }).slice(0, 10);
+
+    var html =
+      '<div class="segmented">' +
+        '<button type="button" data-month="0" aria-pressed="' + (reportMonth === 0) + '">' + esc(t('thisMonth')) + '</button>' +
+        '<button type="button" data-month="-1" aria-pressed="' + (reportMonth === -1) + '">' + esc(t('lastMonth')) + '</button>' +
+      '</div>' +
+      '<div class="report-grid">' +
+        '<div class="stat"><div class="top"><span class="chip owe">' + icon('debt') + '</span>' + esc(t('debtGiven')) + '</div>' +
+          '<div class="val num owe-text">' + money(given) + '</div></div>' +
+        '<div class="stat"><div class="top"><span class="chip paid">' + icon('payment') + '</span>' + esc(t('paymentsReceived')) + '</div>' +
+          '<div class="val num paid-text">' + money(paid) + '</div></div>' +
+        '<div class="stat wide"><div class="top"><span class="chip brand">' + icon('wallet') + '</span>' + esc(t('stillOutstanding')) + '</div>' +
+          '<div class="val num" style="font-size:24px">' + money(tot.total) + '</div>' +
+          '<div class="top" style="margin-top:4px">' + esc(t('owingCustomers', { n: tot.owing })) + '</div></div>' +
+      '</div>';
+
+    if (top.length) {
+      html += '<div class="section-head"><h2>' + esc(t('topOwing')) + '</h2></div>' +
+        '<div class="list-card">' + top.map(customerItem).join('') + '</div>';
+    }
+    html += '<div class="group-title">' + esc(t('exportTitle')) + '</div>' +
+      '<div class="list-card"><button type="button" class="row-btn" id="csvBtn"><span class="chip">' + icon('file') + '</span>' +
+      '<span class="main">' + esc(t('downloadCsv')) + '<span class="meta">' + esc(t('reportsExplain')) + '</span></span>' + icon('chevron') + '</button></div>';
+    app.innerHTML = html;
+
+    app.querySelectorAll('[data-month]').forEach(function (b) {
+      b.addEventListener('click', function () { reportMonth = +b.dataset.month; render(); });
+    });
+    document.getElementById('csvBtn').addEventListener('click', exportCsv);
+  }
+
+  // ---------- Settings ----------
   function renderSettings() {
-    titleEl.textContent = t('settingsTitle');
-    backBtn.hidden = false;
+    frame({ title: t('navSettings'), nav: 'settings' });
     var s = data.settings;
     var last = data.lastBackup ? niceDateTime(data.lastBackup) : t('never');
+    var html = '';
 
-    var accountHtml = '';
     if (cloudAvailable && authKnown) {
-      accountHtml = account
-        ? '<section class="card cloud-card">' +
-            '<div class="section-title" style="margin-top:0">' + esc(t('accountTitle')) + '</div>' +
-            '<p>✅ ' + esc(t('cloudOn')) + '</p>' +
-            '<p>' + esc(t('signedInAs', { email: account.email || account.name || '' })) + '</p>' +
-            '<button class="btn ghost block" data-signout>' + esc(t('signOut')) + '</button>' +
-          '</section>'
-        : signInCardHtml();
+      html += '<div class="group-title" style="margin-top:4px">' + esc(t('accountTitle')) + '</div>';
+      if (account) {
+        var who = account.name || account.email || '';
+        html += '<div class="list-card">' +
+          '<div class="account"><span class="avatar">' + esc(initials(who)) + '</span>' +
+            '<div class="main"><div class="name">' + esc(account.name || account.email) + '</div>' +
+            (account.name && account.email ? '<div class="meta">' + esc(account.email) + '</div>' : '') +
+            '<span class="status-pill">' + icon('check') + esc(t('synced')) + '</span></div></div>' +
+          '<button type="button" class="row-btn danger" data-signout><span class="chip">' + icon('logout') + '</span>' +
+            '<span class="main">' + esc(t('signOut')) + '</span></button>' +
+        '</div>';
+      } else {
+        html += signInCardHtml();
+      }
     }
 
-    app.innerHTML = accountHtml +
-      '<section class="card">' +
-        '<div class="section-title" style="margin-top:0">' + esc(t('language')) + '</div>' +
-        langButtons() +
-      '</section>' +
-      '<section class="card">' +
-        '<div class="section-title" style="margin-top:0">' + esc(t('backupTitle')) + '</div>' +
-        '<p>' + t('backupExplain') + '</p>' +
-        '<p>' + esc(t('lastBackup')) + ' <b>' + esc(last) + '</b></p>' +
-        '<button class="btn block" id="backupBtn">⬆️ ' + esc(t('backupNow')) + '</button>' +
-        '<button class="btn ghost block" id="restoreBtn">⬇️ ' + esc(t('restore')) + '</button>' +
-        '<input type="file" id="restoreFile" accept=".json,application/json" hidden>' +
-      '</section>' +
-      '<form class="card" id="settingsForm">' +
-        '<div class="section-title" style="margin-top:0">' + esc(t('shop')) + '</div>' +
+    html += '<div class="group-title">' + esc(t('language')) + '</div>' + langSegmented();
+
+    html += '<div class="group-title">' + esc(t('shop')) + '</div>' +
+      '<form class="list-card form-pad" id="settingsForm">' +
         '<label for="s-name">' + esc(t('shopName')) + '</label>' +
         '<input id="s-name" name="shopName" value="' + esc(s.shopName) + '" placeholder="' + esc(t('shopNamePh')) + '">' +
         '<label for="s-cur">' + esc(t('currency')) + '</label>' +
         '<input id="s-cur" name="currency" value="' + esc(s.currency) + '" placeholder="KSh">' +
-        '<div style="margin-top:14px"><button class="btn block">' + esc(t('saveSettings')) + '</button></div>' +
-      '</form>' +
-      '<section class="card">' +
-        '<div class="section-title" style="margin-top:0">' + esc(t('reports')) + '</div>' +
-        '<p>' + esc(t('reportsExplain')) + '</p>' +
-        '<button class="btn ghost block" id="csvBtn">📄 ' + esc(t('downloadCsv')) + '</button>' +
-      '</section>';
+        '<div style="margin-top:16px"><button class="btn block">' + esc(t('saveSettings')) + '</button></div>' +
+      '</form>';
 
-    wireLangButtons(app);
-    wireCloudButtons(app);
+    html += '<div class="group-title">' + esc(t('backupTitle')) + '</div>' +
+      '<div class="list-card">' +
+        '<button type="button" class="row-btn" id="backupBtn"><span class="chip">' + icon('upload') + '</span>' +
+          '<span class="main">' + esc(t('backupNow')) + '<span class="meta">' + esc(t('lastBackup')) + ' ' + esc(last) + '</span></span>' + icon('chevron') + '</button>' +
+        '<button type="button" class="row-btn" id="restoreBtn"><span class="chip">' + icon('download') + '</span>' +
+          '<span class="main">' + esc(t('restore')) + '</span>' + icon('chevron') + '</button>' +
+      '</div>' +
+      '<input type="file" id="restoreFile" accept=".json,application/json" hidden>';
+
+    html += '<div class="footer-note">' + icon('shield', '') + '<br>' + esc(t('securityNote')) + '<br>' + esc(t('version', { v: APP_VERSION })) + '</div>';
+    app.innerHTML = html;
+
     document.getElementById('settingsForm').addEventListener('submit', function (ev) {
       ev.preventDefault();
       var fd = new FormData(ev.target);
       s.shopName = String(fd.get('shopName')).trim();
       s.currency = String(fd.get('currency')).trim();
       changed(function (cl) { cl.putSettings(s); });
-      toast(t('settingsSaved')); render();
+      toast(t('settingsSaved'));
+      document.activeElement && document.activeElement.blur && document.activeElement.blur();
+      render();
     });
     document.getElementById('backupBtn').addEventListener('click', backup);
     var fileInput = document.getElementById('restoreFile');
@@ -696,7 +859,6 @@
       if (fileInput.files[0]) restore(fileInput.files[0]);
       fileInput.value = '';
     });
-    document.getElementById('csvBtn').addEventListener('click', exportCsv);
   }
 
   // ---------- Backup / restore ----------
@@ -756,8 +918,7 @@
       changed(function (cl) { cl.replaceAll({ customers: data.customers.map(normC), entries: data.entries.map(normE), settings: data.settings }); });
       applyStaticText();
       toast(t('restored'));
-      location.hash = '#/';
-      render();
+      if (location.hash === '#/' || !location.hash) render(); else location.hash = '#/';
     };
     reader.readAsText(file);
   }
@@ -798,12 +959,15 @@
   backBtn.addEventListener('click', function () {
     if (history.length > 1) history.back(); else location.hash = '#/';
   });
-  document.getElementById('settingsBtn').addEventListener('click', function () { location.hash = '#/settings'; });
-  window.addEventListener('hashchange', function () { render(); window.scrollTo(0, 0); });
+  window.addEventListener('hashchange', function () {
+    if (dialog.open) dialog.close();
+    render();
+    window.scrollTo(0, 0);
+  });
 
   // Keep tabs in sync if the app is open twice.
   window.addEventListener('storage', function (e) {
-    if (e.key === STORAGE_KEY) { data = load(); applyStaticText(); render(); updateBackupBanner(); }
+    if (e.key === STORAGE_KEY) { data = load(); applyStaticText(); render(); }
   });
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
@@ -812,5 +976,4 @@
 
   applyStaticText();
   render();
-  updateBackupBanner();
 })();

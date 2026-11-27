@@ -1,6 +1,6 @@
 // Offline support: the app keeps working with no internet.
-var CACHE = 'deynbook-v5';
-var FILES = ['./', 'index.html', 'style.css', 'app.js', 'i18n.js', 'firebase-config.js', 'cloud.bundle.js', 'manifest.json', 'icon.svg', 'icon-192.png', 'icon-512.png'];
+var CACHE = 'deynbook-v6';
+var FILES = ['./', 'index.html', 'style.css', 'app.js', 'i18n.js', 'icons.js', 'fonts/inter-latin-400-normal.woff2', 'fonts/inter-latin-500-normal.woff2', 'fonts/inter-latin-600-normal.woff2', 'fonts/inter-latin-700-normal.woff2', 'firebase-config.js', 'cloud.bundle.js', 'manifest.json', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); }));
