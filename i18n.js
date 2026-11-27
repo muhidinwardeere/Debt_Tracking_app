@@ -155,6 +155,11 @@ window.I18N = {
     backupFileExplain: 'The backup is an Excel file. You can open it to read all your records, and use Restore to put them back into Deyn Book, for example on a new phone. Send it to yourself on WhatsApp or Google Drive.',
     backupNotNeeded: 'You are signed in, so your records are already saved online. You do not need backup files.',
     backupAdvanced: 'Backup file (optional)',
+    iosTitle: 'iPhone: use the home screen app',
+    iosText: 'On iPhone, records saved here in the browser (Safari or Chrome) do not appear in the home screen app, and the browser may delete them. Sign in with Google first so nothing is lost.',
+    iosStep1: 'Tap Share (Safari: bottom of the screen; Chrome: top, next to the address)',
+    iosStep2: 'Choose "Add to Home Screen"',
+    iosStep3: 'Open Deyn Book from the home screen and sign in with the same Google account',
     chooseLanguage: 'Choose your language',
     months: 'Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec'
   },
@@ -306,6 +311,11 @@ window.I18N = {
     backupFileExplain: 'Kaydku waa fayl Excel ah. Waad furi kartaa si aad u akhriso dhammaan diiwaannadaada, waxaadna ku isticmaali kartaa Soo celin si aad dib ugu celiso Deyn Book, tusaale telefoon cusub. U dir naftaada WhatsApp ama Google Drive.',
     backupNotNeeded: 'Waad gashay, markaa diiwaannadaadu online way ku kaydsan yihiin. Uma baahnid faylal kayd ah.',
     backupAdvanced: 'Faylka kaydka (ikhtiyaari)',
+    iosTitle: 'iPhone: isticmaal app-ka home screen-ka',
+    iosText: 'iPhone-ka, diiwaannada halkan browser-ka (Safari ama Chrome) lagu kaydiyo kama muuqdaan app-ka home screen-ka, browser-kuna wuu tirtiri karaa. Marka hore ku gal Google si aysan waxba u lumin.',
+    iosStep1: 'Riix Share (Safari: hoose ee shaashadda; Chrome: kore, agagaarka cinwaanka)',
+    iosStep2: 'Dooro "Add to Home Screen"',
+    iosStep3: 'Ka fur Deyn Book home screen-ka, kuna gal isla akoonka Google',
     chooseLanguage: 'Dooro luqaddaada',
     months: 'Jan,Feb,Mar,Abr,May,Jun,Luu,Ogo,Seb,Okt,Nof,Dis'
   }
