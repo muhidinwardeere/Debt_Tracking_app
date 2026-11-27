@@ -312,3 +312,7 @@ body.has-banner { padding-bottom: calc(var(--nav-h) + var(--safe-b) + 100px); }
   max-width: 90vw; text-align: center; box-shadow: var(--shadow-lg);
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+.hint { color: var(--muted); font-size: 13px; margin: 10px 4px 0; line-height: 1.5; }
+.hint svg.i { width: 15px; height: 15px; vertical-align: -3px; }
+details.more summary { cursor: pointer; color: var(--brand-text); font-weight: 600; font-size: 14px; padding: 10px 4px; }
+details.more[open] summary { margin-bottom: 6px; }

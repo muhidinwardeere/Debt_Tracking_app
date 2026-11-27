@@ -785,14 +785,14 @@
         '<div class="list-card">' + top.map(customerItem).join('') + '</div>';
     }
     html += '<div class="group-title">' + esc(t('exportTitle')) + '</div>' +
-      '<div class="list-card"><button type="button" class="row-btn" id="csvBtn"><span class="chip">' + icon('file') + '</span>' +
-      '<span class="main">' + esc(t('downloadCsv')) + '<span class="meta">' + esc(t('reportsExplain')) + '</span></span>' + icon('chevron') + '</button></div>';
+      '<div class="list-card"><button type="button" class="row-btn" id="excelBtn"><span class="chip" style="background:#e3f6ec;color:#107c41">' + icon('file') + '</span>' +
+      '<span class="main">' + esc(t('excelTitle')) + '<span class="meta">' + esc(t('excelExplain')) + '</span></span>' + icon('chevron') + '</button></div>';
     app.innerHTML = html;
 
     app.querySelectorAll('[data-month]').forEach(function (b) {
       b.addEventListener('click', function () { reportMonth = +b.dataset.month; render(); });
     });
-    document.getElementById('csvBtn').addEventListener('click', exportCsv);
+    document.getElementById('excelBtn').addEventListener('click', exportExcel);
   }
 
   // ---------- Settings ----------
@@ -830,13 +830,19 @@
         '<div style="margin-top:16px"><button class="btn block">' + esc(t('saveSettings')) + '</button></div>' +
       '</form>';
 
-    html += '<div class="group-title">' + esc(t('backupTitle')) + '</div>' +
+    var backupRows =
       '<div class="list-card">' +
         '<button type="button" class="row-btn" id="backupBtn"><span class="chip">' + icon('upload') + '</span>' +
           '<span class="main">' + esc(t('backupNow')) + '<span class="meta">' + esc(t('lastBackup')) + ' ' + esc(last) + '</span></span>' + icon('chevron') + '</button>' +
         '<button type="button" class="row-btn" id="restoreBtn"><span class="chip">' + icon('download') + '</span>' +
           '<span class="main">' + esc(t('restore')) + '</span>' + icon('chevron') + '</button>' +
       '</div>' +
+      '<p class="hint">' + esc(t('backupFileExplain')) + '</p>';
+    html += '<div class="group-title">' + esc(t('backupFileTitle')) + '</div>' +
+      (account
+        ? '<p class="hint" style="margin-top:0">' + icon('cloud') + ' ' + esc(t('backupNotNeeded')) + '</p>' +
+          '<details class="more"><summary>' + esc(t('backupAdvanced')) + '</summary>' + backupRows + '</details>'
+        : backupRows) +
       '<input type="file" id="restoreFile" accept=".json,application/json" hidden>';
 
     html += '<div class="footer-note">' + icon('shield', '') + '<br>' + esc(t('securityNote')) + '<br>' + esc(t('version', { v: APP_VERSION })) + '</div>';
@@ -923,19 +929,53 @@
     reader.readAsText(file);
   }
 
-  function exportCsv() {
-    function cell(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
-    var lines = [t('csvHeader')];
-    data.customers
-      .map(function (c) { return { c: c, bal: balanceOf(c.id) }; })
-      .filter(function (r) { return r.bal > 0; })
-      .sort(function (a, b) { return b.bal - a.bal; })
-      .forEach(function (r) {
-        lines.push([cell(r.c.name), cell(r.c.phone), (r.bal / 100).toFixed(2), cell(lastActivity(r.c.id))].join(','));
+  // Full records as a real Excel file (two sheets) that anyone can open.
+  var excelLib = null;
+  function exportExcel() {
+    var loading = excelLib || import('./excel.bundle.js').then(function (m) { excelLib = Promise.resolve(m); return m; });
+    Promise.resolve(loading).then(function (lib) {
+      var cur = data.settings.currency || '';
+      var amountCol = function (key) { return t(key) + (cur ? ' (' + cur + ')' : ''); };
+      var rows = data.customers.map(function (c) {
+        var taken = 0, paid = 0;
+        data.entries.forEach(function (e) {
+          if (e.customerId !== c.id) return;
+          if (e.type === 'debt') taken += e.amount; else paid += e.amount;
+        });
+        return { c: c, taken: taken, paid: paid, bal: taken - paid };
+      }).sort(function (a, b) { return b.bal - a.bal || a.c.name.localeCompare(b.c.name); });
+
+      var customers = [[t('colName'), t('colPhone'), t('colPlace'), amountCol('colTaken'), amountCol('colPaid'), amountCol('colBalance'), t('colLast')]];
+      var sumT = 0, sumP = 0, sumB = 0;
+      rows.forEach(function (r) {
+        sumT += r.taken; sumP += r.paid; sumB += r.bal;
+        customers.push([r.c.name, r.c.phone || '', r.c.place || '', r.taken / 100, r.paid / 100, r.bal / 100, lastActivity(r.c.id) || '']);
       });
-    // BOM so Excel shows non-English letters correctly.
-    var blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv' });
-    shareOrDownload(blob, 'debts_' + today() + '.csv', t('downloadCsv'));
+      customers.push([]);
+      customers.push([t('totalRow'), '', '', sumT / 100, sumP / 100, sumB / 100, '']);
+
+      // History in date order, with each customer's balance after every record.
+      var running = {};
+      var history = [[t('colDate'), t('colCustomer'), t('colType'), amountCol('colAmount'), t('colNote'), amountCol('colBalanceAfter')]];
+      data.entries.slice().sort(function (a, b) {
+        return (a.date + a.createdAt).localeCompare(b.date + b.createdAt);
+      }).forEach(function (e) {
+        var c = findCustomer(e.customerId);
+        running[e.customerId] = (running[e.customerId] || 0) + (e.type === 'debt' ? e.amount : -e.amount);
+        history.push([e.date, c ? c.name : '?', e.type === 'debt' ? t('debtOn') : t('paymentOn'),
+          e.amount / 100, e.note || '', running[e.customerId] / 100]);
+      });
+
+      var blob = lib.makeWorkbook([
+        { name: t('sheetCustomers'), rows: customers, widths: [24, 16, 20, 18, 16, 16, 14] },
+        { name: t('sheetHistory'), rows: history, widths: [12, 24, 14, 14, 30, 16] }
+      ]);
+      var shop = (data.settings.shopName || 'Deyn-Book').replace(/[^\w\u00C0-\u024F -]+/g, '').trim().replace(/\s+/g, '-');
+      return shareOrDownload(blob, shop + '_' + today() + '.xlsx', t('excelTitle'));
+    }).catch(function (e) {
+      console.error(e);
+      alert(t('excelFailed'));
+    });
   }
 
   // ---------- Backup reminder ----------
